@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+  <kcfgfile name=""/>
+  <group name="General">
+    <entry name="statePath" type="String">
+      <label>Path to the snapshot written by the aicredits daemon</label>
+      <default>.local/state/aicredits/state.json</default>
+    </entry>
+    <entry name="refreshCommand" type="String">
+      <label>Command run by the Refresh button</label>
+      <default>systemctl --user start aicredits.service</default>
+    </entry>
+    <entry name="readIntervalMs" type="Int">
+      <label>How often the applet re-reads the snapshot file</label>
+      <default>30000</default>
+    </entry>
+    <entry name="warnPct" type="Double">
+      <label>Percentage at which a meter turns amber</label>
+      <default>80</default>
+    </entry>
+    <entry name="criticalPct" type="Double">
+      <label>Percentage at which a meter turns red</label>
+      <default>95</default>
+    </entry>
+    <entry name="hideUnconfigured" type="Bool">
+      <label>Hide providers that have no credentials configured</label>
+      <default>false</default>
+    </entry>
+  </group>
+</kcfg>

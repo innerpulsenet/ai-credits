@@ -1,0 +1,19 @@
+{
+    "KPackageStructure": "Plasma/Applet",
+    "KPlugin": {
+        "Authors": [
+            {
+                "Email": "phackett@gmail.com",
+                "Name": "Patrick Hackett"
+            }
+        ],
+        "Category": "System Information",
+        "Description": "Remaining quota, credits and renewals across your AI subscriptions",
+        "Icon": "utilities-system-monitor",
+        "Id": "org.kde.plasma.aicredits",
+        "License": "MIT",
+        "Name": "AI Credits",
+        "Version": "0.1"
+    },
+    "X-Plasma-API-Minimum-Version": "6.0"
+}

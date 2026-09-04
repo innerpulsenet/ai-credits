@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh AI subscription usage every 10 minutes
+
+[Timer]
+OnStartupSec=2min
+OnUnitActiveSec=10min
+# Let systemd batch this with other wakeups; nothing here is time-critical.
+AccuracySec=1min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

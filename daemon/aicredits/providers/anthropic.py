@@ -1,0 +1,260 @@
+"""Claude usage.
+
+Two paths, in order of preference:
+
+1. `GET https://api.anthropic.com/api/oauth/usage` with an OAuth token, which
+   returns the real 5-hour and weekly subscription windows. Claude Code on this
+   machine is the desktop app, which keeps its token in Electron safeStorage
+   ("Claude Keys/Claude Safe Storage" in kdewallet) rather than in
+   ~/.claude/.credentials.json, so we do not go looking for it — supply one
+   yourself with `aicredits auth set claude <token>` to enable this path.
+
+2. Otherwise, local transcript accounting: sum the `usage` blocks Claude Code
+   writes to ~/.claude/projects/**/*.jsonl and price them at published API
+   rates. That measures consumption, not remaining quota — an honest proxy, and
+   labelled as an estimate.
+
+Transcripts repeat a record per requestId, so deduplication is mandatory or
+every figure doubles.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+from typing import Any
+
+from .. import config as cfg
+from .. import secrets
+from ..model import OK, SPEND, WINDOW, Meter, Reading, error_reading
+from .base import Provider, iso_to_epoch, register, window_label
+
+PROJECTS = Path.home() / ".claude" / "projects"
+CACHE = cfg.DATA_DIR / "claude_scan.json"
+USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+
+# USD per million tokens (input, output). Prefix match, longest first, so dated
+# variants fall back to their family. Override in config: [providers.claude.pricing]
+PRICING: dict[str, tuple[float, float]] = {
+    "claude-fable-5": (10.00, 50.00),
+    "claude-mythos-5": (10.00, 50.00),
+    "claude-opus-5": (5.00, 25.00),
+    "claude-opus-4-8": (5.00, 25.00),
+    "claude-opus-4-7": (5.00, 25.00),
+    "claude-opus-4-6": (5.00, 25.00),
+    "claude-sonnet-5": (2.00, 10.00),
+    "claude-sonnet-4-6": (3.00, 15.00),
+    "claude-haiku-4-5": (1.00, 5.00),
+}
+CACHE_READ_MULTIPLIER = 0.1        # 0.025 on Fable 5.1; see _cache_read_rate
+CACHE_WRITE_5M = 1.25
+CACHE_WRITE_1H = 2.0
+
+
+def _rates(model: str, overrides: dict[str, Any]) -> tuple[float, float] | None:
+    for table in (overrides, PRICING):
+        for prefix in sorted(table, key=len, reverse=True):
+            if model.startswith(prefix):
+                value = table[prefix]
+                return (float(value[0]), float(value[1]))
+    return None
+
+
+def _cache_read_rate(model: str, input_rate: float) -> float:
+    if model.startswith(("claude-fable-5-1", "claude-mythos-5-1")):
+        return 0.25 / 1e6
+    return input_rate * CACHE_READ_MULTIPLIER
+
+
+# ---------------------------------------------------------------- transcripts
+
+def _load_cache() -> dict[str, Any]:
+    try:
+        return json.loads(CACHE.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_cache(data: dict[str, Any]) -> None:
+    CACHE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CACHE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(data))
+    os.replace(tmp, CACHE)
+
+
+def _scan_file(path: Path) -> dict[str, dict[str, list[float]]]:
+    """Hour-bucketed token totals for one transcript, deduped by requestId."""
+    buckets: dict[str, dict[str, list[float]]] = {}
+    seen: set[str] = set()
+    with path.open(errors="replace") as fh:
+        for line in fh:
+            if '"usage"' not in line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            message = obj.get("message")
+            if not isinstance(message, dict):
+                continue
+            usage = message.get("usage")
+            if not isinstance(usage, dict):
+                continue
+            # The same request is written more than once; count it once.
+            key = obj.get("requestId") or message.get("id")
+            if key:
+                if key in seen:
+                    continue
+                seen.add(key)
+            ts = iso_to_epoch(obj.get("timestamp"))
+            if not ts:
+                continue
+            creation = usage.get("cache_creation") or {}
+            hour = str(ts - ts % 3600)
+            model = message.get("model") or "unknown"
+            slot = buckets.setdefault(hour, {}).setdefault(model, [0.0] * 5)
+            slot[0] += usage.get("input_tokens") or 0
+            slot[1] += usage.get("output_tokens") or 0
+            slot[2] += usage.get("cache_read_input_tokens") or 0
+            slot[3] += creation.get("ephemeral_5m_input_tokens") or 0
+            slot[4] += creation.get("ephemeral_1h_input_tokens") or 0
+    return buckets
+
+
+def collect(root: Path) -> tuple[dict[str, dict[str, list[float]]], int | None]:
+    """Merged hour buckets across every transcript, using an mtime cache."""
+    cache = _load_cache()
+    fresh: dict[str, Any] = {}
+    merged: dict[str, dict[str, list[float]]] = {}
+    newest: int | None = None
+    for path in sorted(root.glob("*/*.jsonl")):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        key = str(path)
+        entry = cache.get(key)
+        if not entry or entry.get("mtime") != int(stat.st_mtime) or entry.get("size") != stat.st_size:
+            entry = {"mtime": int(stat.st_mtime), "size": stat.st_size, "buckets": _scan_file(path)}
+        fresh[key] = entry
+        newest = max(newest or 0, int(stat.st_mtime))
+        for hour, models in entry["buckets"].items():
+            target = merged.setdefault(hour, {})
+            for model, counts in models.items():
+                slot = target.setdefault(model, [0.0] * 5)
+                for i, value in enumerate(counts):
+                    slot[i] += value
+    _save_cache(fresh)
+    return merged, newest
+
+
+def cost_since(buckets: dict[str, dict[str, list[float]]], since: int,
+               overrides: dict[str, Any]) -> tuple[float, int, set[str]]:
+    """(usd, tokens, unpriced models) for everything at or after `since`."""
+    usd = 0.0
+    tokens = 0
+    unpriced: set[str] = set()
+    for hour, models in buckets.items():
+        if int(hour) + 3600 <= since:
+            continue
+        for model, (inp, out, read, write5m, write1h) in models.items():
+            # "<synthetic>" marks locally generated messages that never hit the
+            # API; they cost nothing and are not a missing price.
+            if model.startswith("<"):
+                continue
+            tokens += int(inp + out + read + write5m + write1h)
+            rates = _rates(model, overrides)
+            if not rates:
+                unpriced.add(model)
+                continue
+            in_rate, out_rate = rates[0] / 1e6, rates[1] / 1e6
+            usd += (inp * in_rate + out * out_rate
+                    + read * _cache_read_rate(model, in_rate)
+                    + write5m * in_rate * CACHE_WRITE_5M
+                    + write1h * in_rate * CACHE_WRITE_1H)
+    return usd, tokens, unpriced
+
+
+# ------------------------------------------------------------------ oauth API
+
+def _oauth_usage(token: str, timeout: int = 15) -> dict[str, Any]:
+    request = urllib.request.Request(USAGE_URL, headers={
+        "Authorization": f"Bearer {token}",
+        "anthropic-beta": "oauth-2025-04-20",
+        "Accept": "application/json",
+    })
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode())
+
+
+def _meters_from_oauth(payload: dict[str, Any]) -> list[Meter]:
+    """Map the usage payload defensively — the shape is undocumented."""
+    meters: list[Meter] = []
+    candidates = payload.get("usage") if isinstance(payload.get("usage"), list) else None
+    if candidates is None:
+        candidates = [v for v in payload.values() if isinstance(v, dict)]
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        pct = item.get("utilization") or item.get("used_percent") or item.get("percent_used")
+        if pct is None:
+            continue
+        resets = item.get("resets_at") or item.get("reset_at")
+        meters.append(Meter(
+            kind=WINDOW,
+            label=str(item.get("name") or window_label(item.get("window_minutes"))),
+            used_pct=float(pct) * (100.0 if float(pct) <= 1.0 else 1.0),
+            resets_at=iso_to_epoch(resets) if isinstance(resets, str) else resets,
+        ))
+    return meters
+
+
+@register
+class Claude(Provider):
+    id = "claude"
+    label = "Claude"
+    source = "local-log"
+
+    def poll(self, settings: dict[str, Any]) -> Reading:
+        label = settings.get("label", self.label)
+        token = secrets.get("claude")
+        if token:
+            try:
+                payload = _oauth_usage(token)
+                meters = _meters_from_oauth(payload)
+                if meters:
+                    return Reading(id=self.id, label=label, status=OK, source="http",
+                                   fetched_at=int(time.time()), meters=meters,
+                                   url=settings.get("url"))
+            except (urllib.error.URLError, json.JSONDecodeError, ValueError, TimeoutError):
+                pass    # fall through to transcript accounting
+        return self._from_transcripts(settings, label)
+
+    def _from_transcripts(self, settings: dict[str, Any], label: str) -> Reading:
+        root = Path(settings.get("projects_dir") or PROJECTS).expanduser()
+        if not root.is_dir():
+            return error_reading(self.id, label, f"no transcript directory at {root}",
+                                 url=settings.get("url"))
+        buckets, newest = collect(root)
+        if not buckets:
+            return error_reading(self.id, label, "no usage records in transcripts",
+                                 url=settings.get("url"))
+        now = int(time.time())
+        overrides = settings.get("pricing") or {}
+        meters: list[Meter] = []
+        unpriced: set[str] = set()
+        for hours, name in ((5, "5h"), (168, "7d")):
+            usd, tokens, missing = cost_since(buckets, now - hours * 3600, overrides)
+            unpriced |= missing
+            meters.append(Meter(kind=SPEND, label=name, amount_usd=round(usd, 2),
+                                period=name, total=float(tokens), unit="tokens"))
+        message = "estimated API-equivalent spend, not subscription quota"
+        if unpriced:
+            message += f" — unpriced model(s): {', '.join(sorted(unpriced))}"
+        return Reading(id=self.id, label=label, status=OK, source="local-log",
+                       fetched_at=newest, meters=meters, url=settings.get("url"),
+                       message=message)

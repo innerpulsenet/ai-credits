@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Thin launcher so the package need not be installed system-wide.
+here="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+exec python3 -P -c "import sys; sys.path.insert(0, '$here/daemon'); from aicredits.__main__ import main; sys.exit(main())" "$@"

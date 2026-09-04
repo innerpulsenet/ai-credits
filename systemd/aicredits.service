@@ -1,0 +1,13 @@
+[Unit]
+Description=Collect AI subscription usage into one snapshot
+Documentation=file:%h/Documents/ai-credits/README.md
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/Documents/ai-credits/bin/aicredits poll
+# Poll failures are expected (a vendor changes a log format, the network drops);
+# the snapshot keeps the last good figures, so never let one spam the journal.
+SuccessExitStatus=0 1
+Nice=10
+IOSchedulingClass=idle
