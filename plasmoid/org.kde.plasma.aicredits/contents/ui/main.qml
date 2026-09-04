@@ -31,12 +31,17 @@ PlasmoidItem {
     // for one JSON file — so the snapshot is read through Plasma's executable
     // data engine instead.
     readonly property string readCommand: 'cat "' + root.statePath + '"'
+    readonly property string cliPath: {
+        const configured = Plasmoid.configuration.cliPath;
+        return configured.startsWith("/") ? configured : root.homeDir + "/" + configured;
+    }
 
     property var providers: []
     property var totals: ({})
     property int updatedAt: 0
     property bool loaded: false
     property string loadError: ""
+    property bool refreshing: false
 
     readonly property real warnPct: Plasmoid.configuration.warnPct
     readonly property real criticalPct: Plasmoid.configuration.criticalPct
@@ -166,6 +171,16 @@ PlasmoidItem {
         return i18n("resets in %1d", Math.round(seconds / 86400));
     }
 
+    function displayDate(isoDate) {
+        if (!isoDate)
+            return "";
+        const parts = isoDate.split("-");
+        if (parts.length !== 3)
+            return isoDate;
+        const date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
+        return Qt.formatDate(date, "MMM d");
+    }
+
     preferredRepresentation: compactRepresentation
     compactRepresentation: CompactRepresentation { plasmoidItem: root }
     fullRepresentation: FullRepresentation { plasmoidItem: root }
@@ -234,14 +249,26 @@ PlasmoidItem {
         interval: 0
         onNewData: function(source, data) {
             disconnectSource(source);
+            root.refreshing = false;
             root.reload();
         }
     }
 
+    function shellQuote(value) {
+        return "'" + String(value).replace(/'/g, "'\\''") + "'";
+    }
+
     function refreshNow() {
-        const command = Plasmoid.configuration.refreshCommand;
-        if (command)
-            runner.connectSource(command);
+        if (root.refreshing)
+            return;
+        let command = Plasmoid.configuration.refreshCommand;
+        // Preserve genuine custom commands, but upgrade the original default:
+        // starting the normal timer service respected provider intervals and
+        // therefore did not mean "refresh now".
+        if (!command || command === "systemctl --user start aicredits.service")
+            command = root.shellQuote(root.cliPath) + " poll --force";
+        root.refreshing = true;
+        runner.connectSource(command);
     }
 
     // Re-read the moment the popup opens, so it never shows an old figure just

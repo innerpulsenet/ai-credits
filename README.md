@@ -12,6 +12,8 @@ Two decoupled pieces joined by one JSON file:
   that file. It makes no network calls, so the panel can never block on a slow
   vendor API.
 
+![AI Credits Plasma popup](docs/ai-credits-popup.png)
+
 ## Where the numbers come from
 
 | Provider | Source | Freshness |
@@ -20,7 +22,7 @@ Two decoupled pieces joined by one JSON file:
 | SuperGrok | `~/.grok/logs/unified.jsonl` → `billing: fetched credits config` | last `grok` run |
 | ZCode GLM | live `GET api.z.ai/api/monitor/usage/quota/limit` (5h + weekly credit windows), key via `aicredits auth set zai`; falls back to `~/.zcode/v2/logs/*.log` | live |
 | Nous Portal | live `GET /api/oauth/account` + `/api/billing/state`, token from `~/.hermes/auth.json` | live |
-| Claude | `~/.claude/projects/**/*.jsonl` usage blocks, priced at published API rates | live |
+| Claude | live OAuth usage via Claude Code's local login (5h + 7d); falls back to Claude Code's cached usage, then transcript spend | live / cached |
 | Alibaba | `bl usage token-plan --output json` (official CLI, needs `bl auth login --console`); falls back to `~/.qwen/usage_record.jsonl` consumption | live / last `qwen` run |
 | OpenRouter | live `GET /api/v1/credits` — needs a stored **management** key | live |
 | Antigravity | `agy --print "/usage" --output-format text` (Gemini + Claude/GPT groups, weekly + 5h) | live |
@@ -29,13 +31,13 @@ Several of these are private, undocumented endpoints or log formats that can
 change without notice. Adapters fail soft: a provider that cannot be read keeps
 showing its last good figures marked `stale`, and never silently reads as 0%.
 
-**Why some providers are read from disk:** ZCode and Claude Code both store
-their own tokens with Electron `safeStorage` (`enc:v1:…`, keyed by the OS
-keyring), so reusing those tokens would mean reimplementing that decryption.
-ZCode is instead reached with a Z.ai API key you supply; Claude has no usable
-token here at all, so it falls back to counting its own transcripts. Codex and
-SuperGrok need no credential — their CLIs already cache the numbers on disk, at
-the cost of freshness, which the UI labels.
+**Why some providers are read from disk:** ZCode stores its token with Electron
+`safeStorage` (`enc:v1:…`, keyed by the OS keyring), so it is reached with a
+Z.ai API key you supply. Current native Claude Code releases expose their OAuth
+login in `~/.claude/.credentials.json`; the collector reads the access token in
+place (it never copies or logs it) to request the real subscription windows.
+Codex and SuperGrok need no credential — their CLIs already cache the numbers on
+disk, at the cost of freshness, which the UI labels.
 
 **Percentages are normalised on the way in.** Providers disagree about what a
 percentage means, and each disagreement is a bug waiting to happen:
@@ -79,6 +81,10 @@ bin/aicredits auth list
 ```
 
 Record what a subscription costs, so the popup footer can total it:
+
+Right-click the widget, choose **Configure AI Credits**, and use the
+**Subscriptions** page. OpenRouter is intentionally omitted because its credit
+balance is prepaid. The same values can be managed from the terminal:
 
 ```bash
 bin/aicredits config set providers.claude.renewal.date 2026-09-20
@@ -146,7 +152,7 @@ Each of these failed **silently** — no error, just wrong output:
 python3 -m unittest discover -s tests
 ```
 
-36 tests, no dependencies. Parsers run against redacted copies of real CLI
+39 tests, no dependencies. Parsers run against redacted copies of real CLI
 output in `tests/fixtures/`, so they work offline; each provider's quirks
 (remaining-vs-used, ratio-vs-percent, ms-vs-seconds) are pinned by a test.
 

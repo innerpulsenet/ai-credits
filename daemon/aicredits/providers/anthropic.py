@@ -2,12 +2,11 @@
 
 Two paths, in order of preference:
 
-1. `GET https://api.anthropic.com/api/oauth/usage` with an OAuth token, which
-   returns the real 5-hour and weekly subscription windows. Claude Code on this
-   machine is the desktop app, which keeps its token in Electron safeStorage
-   ("Claude Keys/Claude Safe Storage" in kdewallet) rather than in
-   ~/.claude/.credentials.json, so we do not go looking for it — supply one
-   yourself with `aicredits auth set claude <token>` to enable this path.
+1. `GET https://api.anthropic.com/api/oauth/usage` with Claude Code's own OAuth
+   access token, which returns the real 5-hour and weekly subscription windows.
+   Current native Claude Code releases keep this in
+   `~/.claude/.credentials.json`. A token explicitly stored with
+   `aicredits auth set claude` still takes precedence.
 
 2. Otherwise, local transcript accounting: sum the `usage` blocks Claude Code
    writes to ~/.claude/projects/**/*.jsonl and price them at published API
@@ -35,6 +34,8 @@ from .base import Provider, iso_to_epoch, register, window_label
 
 PROJECTS = Path.home() / ".claude" / "projects"
 CACHE = cfg.DATA_DIR / "claude_scan.json"
+CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
+CLAUDE_CONFIG = Path.home() / ".claude.json"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
 # USD per million tokens (input, output). Prefix match, longest first, so dated
@@ -191,9 +192,50 @@ def _oauth_usage(token: str, timeout: int = 15) -> dict[str, Any]:
         return json.loads(response.read().decode())
 
 
+def _local_oauth_token(path: Path = CREDENTIALS) -> str | None:
+    """Read Claude Code's access token without ever copying it into our config."""
+    try:
+        payload = json.loads(path.read_text())
+        oauth = payload.get("claudeAiOauth") or {}
+        token = oauth.get("accessToken")
+        expires_ms = int(oauth.get("expiresAt") or 0)
+        if token and (not expires_ms or expires_ms > int(time.time() * 1000)):
+            return str(token)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        pass
+    return None
+
+
+def _local_plan(path: Path = CREDENTIALS) -> str | None:
+    try:
+        oauth = json.loads(path.read_text()).get("claudeAiOauth") or {}
+        plan = oauth.get("subscriptionType")
+        return str(plan) if plan else None
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+
+
 def _meters_from_oauth(payload: dict[str, Any]) -> list[Meter]:
     """Map the usage payload defensively — the shape is undocumented."""
     meters: list[Meter] = []
+    # The current endpoint uses named objects. Keep the generic parser below as
+    # a fallback for older/alternate payloads, but these names are what lets us
+    # distinguish the two headline subscription limits.
+    named = (("five_hour", "5h"), ("seven_day", "7d"))
+    for key, label in named:
+        item = payload.get(key)
+        if not isinstance(item, dict) or item.get("utilization") is None:
+            continue
+        pct = float(item["utilization"])
+        meters.append(Meter(
+            kind=WINDOW,
+            label=label,
+            used_pct=pct * (100.0 if pct <= 1.0 else 1.0),
+            resets_at=iso_to_epoch(item.get("resets_at")),
+        ))
+    if meters:
+        return meters
+
     candidates = payload.get("usage") if isinstance(payload.get("usage"), list) else None
     if candidates is None:
         candidates = [v for v in payload.values() if isinstance(v, dict)]
@@ -213,6 +255,17 @@ def _meters_from_oauth(payload: dict[str, Any]) -> list[Meter]:
     return meters
 
 
+def _cached_usage(path: Path = CLAUDE_CONFIG) -> tuple[list[Meter], int | None]:
+    """Use Claude Code's last successful usage fetch when the API is offline."""
+    try:
+        cached = json.loads(path.read_text()).get("cachedUsageUtilization") or {}
+        fetched_ms = int(cached.get("fetchedAtMs") or 0)
+        meters = _meters_from_oauth(cached.get("utilization") or {})
+        return meters, (fetched_ms // 1000 if fetched_ms else None)
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return [], None
+
+
 @register
 class Claude(Provider):
     id = "claude"
@@ -221,7 +274,7 @@ class Claude(Provider):
 
     def poll(self, settings: dict[str, Any]) -> Reading:
         label = settings.get("label", self.label)
-        token = secrets.get("claude")
+        token = secrets.get("claude") or _local_oauth_token()
         if token:
             try:
                 payload = _oauth_usage(token)
@@ -229,9 +282,14 @@ class Claude(Provider):
                 if meters:
                     return Reading(id=self.id, label=label, status=OK, source="http",
                                    fetched_at=int(time.time()), meters=meters,
-                                   url=settings.get("url"))
+                                   url=settings.get("url"), plan=_local_plan())
             except (urllib.error.URLError, json.JSONDecodeError, ValueError, TimeoutError):
                 pass    # fall through to transcript accounting
+        meters, fetched_at = _cached_usage()
+        if meters:
+            return Reading(id=self.id, label=label, status=OK, source="local-log",
+                           fetched_at=fetched_at, meters=meters, url=settings.get("url"),
+                           plan=_local_plan(), message="last usage reported by Claude Code")
         return self._from_transcripts(settings, label)
 
     def _from_transcripts(self, settings: dict[str, Any], label: str) -> Reading:

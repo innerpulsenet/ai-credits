@@ -136,5 +136,32 @@ def set_value(dotted: str, raw: str) -> Any:
     return value
 
 
+def unset_value(dotted: str) -> bool:
+    """Remove a configured override, pruning any empty parent tables."""
+    if not CONFIG_PATH.exists():
+        return False
+    with CONFIG_PATH.open("rb") as fh:
+        stored: dict[str, Any] = tomllib.load(fh)
+    parts = dotted.split(".")
+    node: Any = stored
+    parents: list[tuple[dict[str, Any], str]] = []
+    for part in parts[:-1]:
+        if not isinstance(node, dict) or part not in node:
+            return False
+        parents.append((node, part))
+        node = node[part]
+    if not isinstance(node, dict) or parts[-1] not in node:
+        return False
+    del node[parts[-1]]
+    for parent, key in reversed(parents):
+        child = parent.get(key)
+        if isinstance(child, dict) and not child:
+            del parent[key]
+        else:
+            break
+    save(stored)
+    return True
+
+
 def enabled_providers(cfg: dict[str, Any]) -> list[str]:
     return [pid for pid, p in cfg["providers"].items() if p.get("enabled", True)]

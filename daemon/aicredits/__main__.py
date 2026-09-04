@@ -56,9 +56,12 @@ def _age(seconds: int) -> str:
 
 def _enrich(entry: dict[str, Any], conn, pid: str, points: int, now: int) -> dict[str, Any]:
     """Attach sparkline and burn-rate projection from stored history."""
-    primary = next((m for m in entry.get("meters", []) if m.get("used_pct") is not None), None)
+    candidates = [m for m in entry.get("meters", [])
+                  if m.get("used_pct") is not None and not m.get("expired")]
+    primary = max(candidates, key=lambda meter: meter["used_pct"]) if candidates else None
     if not primary:
         return entry
+    entry["worst_label"] = primary["label"]
     entry["spark"] = store.spark(conn, pid, primary["label"], points)
     rows = conn.execute(
         "SELECT ts, used_pct FROM readings WHERE provider=? AND meter=? AND ts > ?"
@@ -161,9 +164,14 @@ def _from_cache(conn, pid: str, settings: dict[str, Any], failed: Reading | None
 
 def _totals(entries: list[dict[str, Any]]) -> dict[str, Any]:
     monthly = sum(e["renewal"]["monthly_usd"] for e in entries if e.get("renewal"))
+    subscribed = [e for e in entries if e.get("id") != "openrouter"]
     upcoming = sorted((e for e in entries if e.get("renewal")),
                       key=lambda e: e["renewal"]["days_until"])
-    totals: dict[str, Any] = {"monthly_usd": round(monthly, 2)}
+    totals: dict[str, Any] = {
+        "monthly_usd": round(monthly, 2),
+        "subscriptions_configured": sum(1 for e in subscribed if e.get("renewal")),
+        "subscriptions_total": len(subscribed),
+    }
     if upcoming:
         head = upcoming[0]
         totals["next_renewal"] = {"id": head["id"], "label": head["label"], **head["renewal"]}
@@ -229,6 +237,8 @@ def cmd_config(args) -> int:
         print(json.dumps(cfg.get(args.key) if args.key else cfg.load(), indent=1))
     elif args.action == "set":
         print(f"{args.key} = {cfg.set_value(args.key, args.value)!r}")
+    elif args.action == "unset":
+        print(f"{args.key}: {'removed' if cfg.unset_value(args.key) else 'not set'}")
     return 0
 
 
@@ -293,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     subs.add_parser("doctor", help="probe every adapter").set_defaults(func=cmd_doctor)
 
     conf = subs.add_parser("config")
-    conf.add_argument("action", choices=["get", "set", "path"])
+    conf.add_argument("action", choices=["get", "set", "unset", "path"])
     conf.add_argument("key", nargs="?")
     conf.add_argument("value", nargs="?")
     conf.set_defaults(func=cmd_config)

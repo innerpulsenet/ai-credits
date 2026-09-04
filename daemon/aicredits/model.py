@@ -86,6 +86,10 @@ class Reading:
         values = [m.pct() for m in self.meters if m.pct() is not None and not m.expired]
         return max(values) if values else None
 
+    def worst_meter(self) -> Meter | None:
+        candidates = [m for m in self.meters if m.pct() is not None and not m.expired]
+        return max(candidates, key=lambda meter: meter.pct() or 0) if candidates else None
+
     def to_json(self, now: int | None = None) -> dict[str, Any]:
         now = now or int(time.time())
         out: dict[str, Any] = {
@@ -105,6 +109,9 @@ class Reading:
         pct = self.worst_pct()
         if pct is not None:
             out["worst_pct"] = round(pct, 1)
+            worst = self.worst_meter()
+            if worst:
+                out["worst_label"] = worst.label
         return out
 
 

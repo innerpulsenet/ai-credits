@@ -152,12 +152,25 @@ Item {
                     }
                 }
 
-                Sparkline {
-                    points: row.provider.spark || []
-                    strokeColor: row.owner.inkSoft
+                RowLayout {
+                    spacing: Kirigami.Units.smallSpacing
                     Layout.alignment: Qt.AlignRight
-                    implicitWidth: Kirigami.Units.gridUnit * 2.5
-                    implicitHeight: Math.round(Kirigami.Units.gridUnit * 0.6)
+
+                    PlasmaComponents.Label {
+                        visible: row.hasFigure && text !== ""
+                        text: (row.provider.worst_label || "").toUpperCase()
+                        color: row.owner.inkSoft
+                        font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82)
+                        font.letterSpacing: 0.8
+                        font.capitalization: Font.AllUppercase
+                    }
+
+                    Sparkline {
+                        points: row.provider.spark || []
+                        strokeColor: row.owner.inkSoft
+                        implicitWidth: Kirigami.Units.gridUnit * 2.5
+                        implicitHeight: Math.round(Kirigami.Units.gridUnit * 0.6)
+                    }
                 }
             }
 
@@ -208,7 +221,15 @@ Item {
                 if (!renewal)
                     return "";
                 const cost = renewal.cost_usd ? " · $" + renewal.cost_usd.toFixed(2) : "";
-                return i18n("renews %1 in %2 days", renewal.date, renewal.days_until) + cost;
+                const cadence = renewal.cadence === "annual" || renewal.cadence === "yearly"
+                                ? i18n("/year") : renewal.cadence === "weekly"
+                                ? i18n("/week") : renewal.cadence === "quarterly"
+                                ? i18n("/quarter") : i18n("/month");
+                const when = renewal.days_until === 0 ? i18n("today")
+                           : renewal.days_until === 1 ? i18n("tomorrow")
+                           : i18n("in %1 days", renewal.days_until);
+                return i18n("Renews %1 (%2)", row.owner.displayDate(renewal.date), when)
+                       + cost + (cost ? cadence : "");
             }
             color: row.owner.inkSoft
             font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)

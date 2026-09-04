@@ -72,7 +72,20 @@ PlasmaExtras.Representation {
                 PlasmaComponents.ToolTip.text: text
                 PlasmaComponents.ToolTip.visible: hovered
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                enabled: !full.plasmoidItem.refreshing
                 onClicked: full.plasmoidItem.refreshNow()
+            }
+
+            PlasmaComponents.ToolButton {
+                icon.name: "configure"
+                flat: true
+                opacity: hovered ? 1 : 0.55
+                text: i18n("Configure AI Credits")
+                display: PlasmaComponents.AbstractButton.IconOnly
+                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.visible: hovered
+                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
+                onClicked: Plasmoid.internalAction("configure").trigger()
             }
         }
     }
@@ -166,8 +179,12 @@ PlasmaExtras.Representation {
                     text: {
                         const totals = full.plasmoidItem.totals || ({});
                         const next = totals.next_renewal;
-                        return next ? i18n("%1 · %2", next.label, next.date)
-                                    : i18n("none configured");
+                        if (next)
+                            return i18n("%1 · %2", next.label,
+                                        full.plasmoidItem.displayDate(next.date));
+                        const count = totals.subscriptions_total || 0;
+                        return count ? i18n("Add dates for %1 subscriptions", count)
+                                     : i18n("None configured");
                     }
                     color: full.plasmoidItem.ink
                     font: Kirigami.Theme.smallFont

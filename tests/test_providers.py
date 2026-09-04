@@ -80,6 +80,15 @@ class TestModel(unittest.TestCase):
         ])
         self.assertEqual(reading.worst_pct(), 12.0)
 
+    def test_snapshot_names_the_window_driving_the_headline(self):
+        reading = Reading(id="x", label="X", meters=[
+            Meter(kind=WINDOW, label="5h", used_pct=8.2),
+            Meter(kind=WINDOW, label="Weekly", used_pct=95.8),
+        ])
+        snapshot = reading.to_json()
+        self.assertEqual(snapshot["worst_pct"], 95.8)
+        self.assertEqual(snapshot["worst_label"], "Weekly")
+
 
 class TestTrend(unittest.TestCase):
     POINTS = [(0, 10.0), (3600, 25.0), (7200, 40.0)]
@@ -135,6 +144,27 @@ class TestAlibaba(unittest.TestCase):
 
 
 class TestClaudeAccounting(unittest.TestCase):
+    def test_current_oauth_payload_has_named_windows(self):
+        from aicredits.providers.anthropic import _meters_from_oauth
+        payload = {
+            "five_hour": {"utilization": 95, "resets_at": "2026-09-04T23:29:59Z"},
+            "seven_day": {"utilization": 0.48, "resets_at": "2026-09-06T16:00:00Z"},
+            "extra_usage": {"utilization": None},
+        }
+        meters = _meters_from_oauth(payload)
+        self.assertEqual([m.label for m in meters], ["5h", "7d"])
+        self.assertEqual([m.used_pct for m in meters], [95.0, 48.0])
+        self.assertIsNotNone(meters[0].resets_at)
+
+    def test_reads_unexpired_local_claude_code_token(self):
+        import json
+        import tempfile
+        from aicredits.providers.anthropic import _local_oauth_token
+        with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+            json.dump({"claudeAiOauth": {"accessToken": "secret",
+                                          "expiresAt": 4102444800000}}, fh)
+        self.assertEqual(_local_oauth_token(Path(fh.name)), "secret")
+
     def test_synthetic_model_is_free_and_not_reported_unpriced(self):
         from aicredits.providers.anthropic import cost_since
         buckets = {"1788480000": {"<synthetic>": [100.0, 100.0, 0.0, 0.0, 0.0]}}

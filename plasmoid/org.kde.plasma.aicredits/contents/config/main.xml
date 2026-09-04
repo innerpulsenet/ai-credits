@@ -13,6 +13,10 @@
       <label>Command run by the Refresh button</label>
       <default>systemctl --user start aicredits.service</default>
     </entry>
+    <entry name="cliPath" type="String">
+      <label>Path to the aicredits command used by the subscription editor</label>
+      <default>Documents/ai-credits/bin/aicredits</default>
+    </entry>
     <entry name="readIntervalMs" type="Int">
       <label>How often the applet re-reads the snapshot file</label>
       <default>30000</default>
