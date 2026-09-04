@@ -18,8 +18,8 @@ Two decoupled pieces joined by one JSON file:
 
 | Provider | Source | Freshness |
 |---|---|---|
-| Codex | `~/.codex/sessions/**/rollout-*.jsonl` → `rate_limits` (5h + weekly, exact) | last `codex` run |
-| SuperGrok | `~/.grok/logs/unified.jsonl` → `billing: fetched credits config` | last `grok` run |
+| Codex | live `codex app-server` → `account/rateLimits/read` (5h + weekly); falls back to the latest session rollout | live / cached |
+| SuperGrok | briefly starts the authenticated `grok` client in a private terminal to refresh `billing: fetched credits config`; falls back to the latest unified log record | live / cached |
 | ZCode GLM | live `GET api.z.ai/api/monitor/usage/quota/limit` (5h + weekly credit windows), key via `aicredits auth set zai`; falls back to `~/.zcode/v2/logs/*.log` | live |
 | Nous Portal | live `GET /api/oauth/account` + `/api/billing/state`, token from `~/.hermes/auth.json` | live |
 | Claude | live OAuth usage via Claude Code's local login (5h + 7d); falls back to Claude Code's cached usage, then transcript spend | live / cached |
@@ -36,8 +36,13 @@ showing its last good figures marked `stale`, and never silently reads as 0%.
 Z.ai API key you supply. Current native Claude Code releases expose their OAuth
 login in `~/.claude/.credentials.json`; the collector reads the access token in
 place (it never copies or logs it) to request the real subscription windows.
-Codex and SuperGrok need no credential — their CLIs already cache the numbers on
-disk, at the cost of freshness, which the UI labels.
+Codex and SuperGrok need no separately stored credential. The collector reuses
+each installed client's existing login and does not send a prompt or start a
+model turn. Codex exposes its current rate limits through App Server. Grok
+refreshes its billing configuration during client startup, so the collector
+starts it under a private pseudo-terminal and closes it as soon as that record
+arrives. If either client is unavailable, its last cached figures remain visible
+and age normally in the UI.
 
 **Percentages are normalised on the way in.** Providers disagree about what a
 percentage means, and each disagreement is a bug waiting to happen:
@@ -152,12 +157,13 @@ Each of these failed **silently** — no error, just wrong output:
 python3 -m unittest discover -s tests
 ```
 
-39 tests, no dependencies. Parsers run against redacted copies of real CLI
+41 tests, no dependencies. Parsers run against redacted copies of real CLI
 output in `tests/fixtures/`, so they work offline; each provider's quirks
 (remaining-vs-used, ratio-vs-percent, ms-vs-seconds) are pinned by a test.
 
 ## Status
 
-All eight providers report live. Outstanding: renewal dates and costs are
-config-only and unset, so the popup footer reads `$0.00` — see the `renewal`
-keys above.
+All eight providers report live when their authenticated clients, APIs, or
+credentials are available. Every adapter retains its last good result and marks
+it stale if a refresh fails. Subscription renewal dates and costs are optional
+and editable from the widget's configuration window.

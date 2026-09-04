@@ -6,8 +6,10 @@ Stdlib unittest so it runs with no install:  python3 -m unittest discover -s tes
 
 import datetime as dt
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "daemon"))
@@ -22,6 +24,24 @@ FIXTURES = ROOT / "tests" / "fixtures"
 
 
 class TestCodex(unittest.TestCase):
+    def test_normalizes_live_app_server_response(self):
+        from aicredits.providers.codex import _normalize_live_limits, _reading_from_limits
+        live = {
+            "primary": {"usedPercent": 31, "windowDurationMins": 300,
+                        "resetsAt": 1788568869},
+            "secondary": {"usedPercent": 22, "windowDurationMins": 10080,
+                          "resetsAt": 1788804242},
+            "credits": {"hasCredits": False, "unlimited": False, "balance": "0"},
+            "planType": "plus",
+        }
+        reading = _reading_from_limits(
+            _normalize_live_limits(live), "Codex", None, 1788557409, "http")
+        self.assertIsNotNone(reading)
+        self.assertEqual(reading.source, "http")
+        self.assertEqual(reading.plan, "plus")
+        self.assertEqual([(m.label, m.used_pct) for m in reading.meters],
+                         [("5h", 31.0), ("Weekly", 22.0)])
+
     def test_reads_both_windows(self):
         reading = Codex().poll({"sessions_dir": str(FIXTURES / "codex-sessions")})
         self.assertEqual(reading.status, OK)
@@ -40,6 +60,23 @@ class TestCodex(unittest.TestCase):
 
 
 class TestGrok(unittest.TestCase):
+    def test_prefers_fresh_record_from_headless_agent(self):
+        record = {
+            "ts": "2026-09-04T19:22:26Z",
+            "msg": "billing: fetched credits config",
+            "ctx": {"subscriptionTier": "SuperGrok", "config": {
+                "creditUsagePercent": 27,
+                "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+                                  "end": "2026-09-08T07:38:19Z"},
+            }},
+        }
+        with tempfile.NamedTemporaryFile() as fh, mock.patch(
+                "aicredits.providers.grok._refresh_billing_record", return_value=record):
+            reading = Grok().poll({"log_path": fh.name, "live": True})
+        self.assertEqual(reading.status, OK)
+        self.assertEqual(reading.meters[0].used_pct, 27.0)
+        self.assertEqual(reading.fetched_at, 1788549746)
+
     def test_reads_weekly_usage_and_tier(self):
         reading = Grok().poll({"log_path": str(FIXTURES / "grok-unified.jsonl")})
         self.assertEqual(reading.status, OK)
@@ -52,7 +89,6 @@ class TestGrok(unittest.TestCase):
         self.assertEqual(Grok().poll({"log_path": "/nonexistent.jsonl"}).status, "error")
 
     def test_skips_unrelated_log_lines(self):
-        import tempfile
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
             fh.write('{"ts":"2026-08-31T20:00:00Z","msg":"nothing to see"}\n')
         self.assertEqual(Grok().poll({"log_path": fh.name}).status, "error")
