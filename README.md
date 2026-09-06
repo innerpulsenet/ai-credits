@@ -12,7 +12,7 @@ Two decoupled pieces joined by one JSON file:
   that file. It makes no network calls, so the panel can never block on a slow
   vendor API.
 
-![AI Credits Plasma popup](docs/ai-credits-popup.png)
+![AI Credits Plasma popup](docs/popup.png)
 
 ## Where the numbers come from
 
