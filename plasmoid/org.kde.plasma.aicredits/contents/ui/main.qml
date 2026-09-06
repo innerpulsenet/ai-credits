@@ -53,6 +53,33 @@ PlasmoidItem {
         onTriggered: root.nowSeconds = Math.floor(Date.now() / 1000)
     }
 
+    /*
+     * updatedAt is when the daemon last rewrote the snapshot, which it does on
+     * every run whether or not a provider came due — so it is a poor answer to
+     * "how current is this?". These bound the age of the data actually on
+     * screen. Providers that have never returned data carry no fetched_at and
+     * are left out; their state shows on their own row.
+     */
+    readonly property int oldestFetchedAt: {
+        let oldest = 0;
+        for (const provider of root.providers)
+            if (provider.fetched_at && (!oldest || provider.fetched_at < oldest))
+                oldest = provider.fetched_at;
+        return oldest;
+    }
+    readonly property int newestFetchedAt: {
+        let newest = 0;
+        for (const provider of root.providers)
+            newest = Math.max(newest, provider.fetched_at || 0);
+        return newest;
+    }
+    readonly property string oldestProviderLabel: {
+        for (const provider of root.providers)
+            if (provider.fetched_at === root.oldestFetchedAt)
+                return provider.label;
+        return "";
+    }
+
     readonly property real warnPct: Plasmoid.configuration.warnPct
     readonly property real criticalPct: Plasmoid.configuration.criticalPct
 
@@ -145,6 +172,9 @@ PlasmoidItem {
                        from.b + (to.b - from.b) * f, 1);
     }
 
+    // Where amber sits on the ramp; MeterBar's gradient shares the anchor.
+    readonly property real usageAmberPct: 60
+
     /*
      * Continuous green -> amber -> red ramp across the whole 0-100 range, so a
      * bar's colour alone tells you roughly where a provider stands. The anchors
@@ -156,12 +186,13 @@ PlasmoidItem {
     function usageColor(pct) {
         if (pct === undefined || pct === null || pct < 0)
             return Kirigami.Theme.disabledTextColor;
+        const anchor = root.usageAmberPct / 100;
         const t = Math.max(0, Math.min(1, pct / 100));
-        return t <= 0.6
+        return t <= anchor
             ? root.mixColor(Kirigami.Theme.positiveTextColor,
-                            Kirigami.Theme.neutralTextColor, t / 0.6)
+                            Kirigami.Theme.neutralTextColor, t / anchor)
             : root.mixColor(Kirigami.Theme.neutralTextColor,
-                            Kirigami.Theme.negativeTextColor, (t - 0.6) / 0.4);
+                            Kirigami.Theme.negativeTextColor, (t - anchor) / (1 - anchor));
     }
 
     // Kept for meters that carry no percentage at all.
@@ -185,11 +216,17 @@ PlasmoidItem {
         }
     }
 
+    /*
+     * Reads root.nowSeconds rather than Date.now() so the binding re-evaluates
+     * on the ticker. Calling Date.now() here made the label a snapshot of the
+     * instant its input last changed — which is the instant the data was fresh,
+     * so it read "just now" indefinitely.
+     */
     function relativeTime(epochSeconds) {
         if (!epochSeconds)
             return "";
-        const seconds = Math.max(0, Math.floor(Date.now() / 1000) - epochSeconds);
-        if (seconds < 90) return i18n("just now");
+        const seconds = Math.max(0, root.nowSeconds - epochSeconds);
+        if (seconds < 45) return i18n("just now");
         if (seconds < 5400) return i18n("%1m ago", Math.round(seconds / 60));
         if (seconds < 172800) return i18n("%1h ago", Math.round(seconds / 3600));
         return i18n("%1d ago", Math.round(seconds / 86400));

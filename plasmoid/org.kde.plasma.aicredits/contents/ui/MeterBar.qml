@@ -45,9 +45,9 @@ ColumnLayout {
 
         Sparkline {
             points: meterItem.hasPct ? (meterItem.meter.spark || []) : []
-            strokeColor: meterItem.stale ? meterItem.owner.inkSoft
-                         : meterItem.atRisk ? Kirigami.Theme.neutralTextColor
-                         : Kirigami.Theme.highlightColor
+            strokeColor: meterItem.owner.inkSoft
+            colorRamp: meterItem.stale ? null
+                       : pct => meterItem.owner.usageColor(pct)
             implicitWidth: Kirigami.Units.gridUnit * 2
             implicitHeight: Kirigami.Theme.smallFont.pixelSize
             Layout.alignment: Qt.AlignVCenter
@@ -73,14 +73,43 @@ ColumnLayout {
         border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.04)
 
         Rectangle {
+            id: fill
             readonly property real pct: Math.max(0, Math.min(100, meterItem.meter.used_pct || 0))
             width: pct <= 0 ? 0 : Math.max(height, track.width * (pct / 100))
             height: track.height
             radius: track.radius
 
-            color: meterItem.stale ? meterItem.owner.inkSoft
-                   : meterItem.atRisk ? Kirigami.Theme.neutralTextColor
-                   : Kirigami.Theme.highlightColor
+            color: meterItem.stale ? meterItem.owner.inkSoft : "transparent"
+
+            /*
+             * The fill is painted along the same 0-100 ramp the settings
+             * preview shows: its left edge is always the "no usage" green and
+             * its right edge the colour for the percentage actually reached, so
+             * a filling bar visibly slides green -> amber -> red. Positions are
+             * expressed in fill coordinates, which is why the amber anchor is
+             * divided by the current percentage.
+             */
+            gradient: meterItem.stale ? null : usageRamp
+
+            Gradient {
+                id: usageRamp
+                orientation: Gradient.Horizontal
+                GradientStop {
+                    position: 0.0
+                    color: meterItem.owner.usageColor(0)
+                }
+                GradientStop {
+                    position: fill.pct > meterItem.owner.usageAmberPct
+                              ? meterItem.owner.usageAmberPct / fill.pct : 1.0
+                    color: fill.pct > meterItem.owner.usageAmberPct
+                           ? meterItem.owner.usageColor(meterItem.owner.usageAmberPct)
+                           : meterItem.owner.usageColor(fill.pct)
+                }
+                GradientStop {
+                    position: 1.0
+                    color: meterItem.owner.usageColor(fill.pct)
+                }
+            }
 
             Behavior on width {
                 NumberAnimation {

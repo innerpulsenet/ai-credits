@@ -8,6 +8,18 @@ Canvas {
     property var points: []
     property color strokeColor: Kirigami.Theme.highlightColor
 
+    /*
+     * Optional pct -> colour ramp. When set, the curve is stroked along it so
+     * each sample is drawn in the colour of the usage it represents; the line
+     * itself then reads green -> red as the meter fills. Worth the extra
+     * channel here because the plot is auto-scaled to its own low/high, so
+     * height alone never says whether the series sits at 10% or 90%.
+     */
+    property var colorRamp: null
+    readonly property color latestColor:
+        (colorRamp && points && points.length) ? colorRamp(points[points.length - 1])
+                                               : strokeColor
+
     // A flat series says nothing; drawing it puts a meaningless dash under
     // every figure, so it only appears once there is movement to show.
     readonly property bool hasVariation: {
@@ -25,6 +37,7 @@ Canvas {
     onHeightChanged: requestPaint()
     onPointsChanged: requestPaint()
     onStrokeColorChanged: requestPaint()
+    onColorRampChanged: requestPaint()
 
     onPaint: {
         const ctx = getContext("2d");
@@ -63,15 +76,16 @@ Canvas {
         ctx.lineTo(width, height);
         ctx.lineTo(0, height);
         ctx.closePath();
+        const wash = spark.latestColor;
         const grad = ctx.createLinearGradient(0, 0, 0, height);
-        grad.addColorStop(0, Qt.rgba(strokeColor.r, strokeColor.g, strokeColor.b, 0.28));
-        grad.addColorStop(1, Qt.rgba(strokeColor.r, strokeColor.g, strokeColor.b, 0.0));
+        grad.addColorStop(0, Qt.rgba(wash.r, wash.g, wash.b, 0.28));
+        grad.addColorStop(1, Qt.rgba(wash.r, wash.g, wash.b, 0.0));
         ctx.fillStyle = grad;
         ctx.fill();
         ctx.restore();
 
         // 3. Stroke the curve
-        ctx.strokeStyle = strokeColor;
+        ctx.strokeStyle = spark.rampStyle(ctx);
         ctx.lineWidth = 1.75;
         ctx.lineJoin = "round";
         ctx.lineCap = "round";
@@ -84,9 +98,19 @@ Canvas {
         ctx.stroke();
 
         // 4. Draw endpoint dot
-        ctx.fillStyle = strokeColor;
+        ctx.fillStyle = spark.latestColor;
         ctx.beginPath();
         ctx.arc(lastX - 1, lastY, 1.8, 0, 2 * Math.PI);
         ctx.fill();
+    }
+
+    // One stop per sample, so the ramp bends exactly where the data does.
+    function rampStyle(ctx) {
+        if (!spark.colorRamp)
+            return spark.strokeColor;
+        const grad = ctx.createLinearGradient(0, 0, spark.width, 0);
+        for (let i = 0; i < spark.points.length; ++i)
+            grad.addColorStop(i / (spark.points.length - 1), spark.colorRamp(spark.points[i]));
+        return grad;
     }
 }
