@@ -19,8 +19,12 @@ ColumnLayout {
     required property real warnPct
     required property real criticalPct
     required property var owner
+    property bool stale: false
+    readonly property bool resetDue: !!meter.resets_at && meter.resets_at <= owner.nowSeconds
+    readonly property bool atRisk: !stale && !resetDue && !!meter.projection
+        && !!meter.resets_at && meter.projection.exhausts_at < meter.resets_at
 
-    readonly property bool hasPct: meter.used_pct !== undefined && !meter.expired
+    readonly property bool hasPct: meter.used_pct !== undefined && !meter.expired && !resetDue
     readonly property string level: Severity.of(meterItem.hasPct ? meter.used_pct : -1,
                                                 warnPct, criticalPct)
 
@@ -31,22 +35,29 @@ ColumnLayout {
         spacing: Kirigami.Units.smallSpacing
 
         PlasmaComponents.Label {
-            // Eyebrow: small, widely tracked, quiet. Does the labelling work
-            // without competing with the figure beside it.
-            text: meterItem.meter.label.toUpperCase()
-            color: meterItem.owner.inkSoft
-            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)
-            font.letterSpacing: 0.9
-            font.capitalization: Font.AllUppercase
+            text: meterItem.meter.label.replace(/Weekly/gi, "7d")
+            color: meterItem.owner.ink
+            font.pixelSize: Kirigami.Theme.smallFont.pixelSize
+            font.weight: Font.DemiBold
         }
 
         Item { Layout.fillWidth: true }
 
+        Sparkline {
+            points: meterItem.hasPct ? (meterItem.meter.spark || []) : []
+            strokeColor: meterItem.stale ? meterItem.owner.inkSoft
+                         : meterItem.atRisk ? Kirigami.Theme.neutralTextColor
+                         : Kirigami.Theme.highlightColor
+            implicitWidth: Kirigami.Units.gridUnit * 2
+            implicitHeight: Kirigami.Theme.smallFont.pixelSize
+            Layout.alignment: Qt.AlignVCenter
+            Layout.rightMargin: Kirigami.Units.smallSpacing
+        }
+
         PlasmaComponents.Label {
             text: meterItem.figure()
             font: Kirigami.Theme.smallFont
-            color: meterItem.hasPct ? meterItem.owner.usageColor(meterItem.meter.used_pct)
-                                    : meterItem.owner.ink
+            color: meterItem.owner.ink
         }
     }
 
@@ -55,7 +66,7 @@ ColumnLayout {
         visible: meterItem.hasPct
         Layout.fillWidth: true
         Layout.topMargin: 4
-        Layout.preferredHeight: 6
+        Layout.preferredHeight: 8
         radius: height / 2
         color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08)
         border.width: 1
@@ -67,18 +78,9 @@ ColumnLayout {
             height: track.height
             radius: track.radius
 
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop {
-                    position: 0.0
-                    color: Qt.tint(meterItem.owner.usageColor(meterItem.meter.used_pct),
-                                   Qt.rgba(1, 1, 1, 0.16))
-                }
-                GradientStop {
-                    position: 1.0
-                    color: meterItem.owner.usageColor(meterItem.meter.used_pct)
-                }
-            }
+            color: meterItem.stale ? meterItem.owner.inkSoft
+                   : meterItem.atRisk ? Kirigami.Theme.neutralTextColor
+                   : Kirigami.Theme.highlightColor
 
             Behavior on width {
                 NumberAnimation {
@@ -90,49 +92,46 @@ ColumnLayout {
     }
 
     PlasmaComponents.Label {
-        id: resetLabel
         Layout.fillWidth: true
-        Layout.topMargin: 3
+        Layout.topMargin: 4
+        visible: text !== ""
+        text: meterItem.meter.expired || meterItem.resetDue
+              ? i18n("Reset due · refreshing automatically")
+              : meterItem.meter.resets_at
+                ? i18n("Resets in %1", meterItem.owner.shortDuration(meterItem.meter.resets_at)) : ""
+        color: meterItem.owner.ink
+        font: Kirigami.Theme.smallFont
+        wrapMode: Text.WordWrap
+    }
+
+    PlasmaComponents.Label {
+        Layout.fillWidth: true
+        Layout.topMargin: 2
         visible: text !== ""
         text: {
-            if (meterItem.meter.expired)
-                return i18n("window already reset");
-
-            const resetTime = meterItem.meter.resets_at
-                ? i18n("resets in %1", meterItem.owner.shortDuration(meterItem.meter.resets_at))
-                : "";
-
-            const projection = meterItem.meter.projection;
-            let paceTime = "";
-            if (projection) {
-                const hasExhaust = !!projection.exhausts_at;
-                const hasPct = projection.projected_pct !== undefined;
-                const timeStr = hasExhaust ? meterItem.owner.shortDuration(projection.exhausts_at) : "";
-
-                if (hasPct && hasExhaust) {
-                    const isExhaustFirst = meterItem.meter.resets_at && projection.exhausts_at < meterItem.meter.resets_at;
-                    if (isExhaustFirst) {
-                        paceTime = i18n("on pace for 100% (~%1 to empty)", timeStr);
-                    } else {
-                        paceTime = i18n("on pace for ~%1% (~%2 to empty)", projection.projected_pct, timeStr);
-                    }
-                } else if (hasPct) {
-                    paceTime = i18n("on pace for ~%1%", projection.projected_pct);
-                } else if (hasExhaust) {
-                    paceTime = i18n("~%1 to empty", timeStr);
-                }
+            if (meterItem.stale || meterItem.meter.expired || meterItem.resetDue)
+                return "";
+            if (meterItem.meter.used_pct >= 100)
+                return i18n("Allowance used up");
+            const p = meterItem.meter.projection;
+            if (!p)
+                return meterItem.meter.kind === "window" ? i18n("Pace estimate unavailable") : "";
+            const parts = [];
+            if (p.projected_pct !== undefined)
+                parts.push(i18n("On pace for ~%1%", p.projected_pct));
+            if (p.exhausts_at) {
+                if (meterItem.meter.resets_at && p.exhausts_at >= meterItem.meter.resets_at)
+                    parts.push(i18n("Resets before empty"));
+                else if (p.exhausts_at <= meterItem.owner.nowSeconds)
+                    parts.push(i18n("Near empty at this rate"));
+                else
+                    parts.push(i18n("Empty in ~%1", meterItem.owner.shortDuration(p.exhausts_at)));
             }
-
-            if (resetTime && paceTime)
-                return resetTime + " · " + paceTime;
-            if (resetTime)
-                return resetTime;
-            if (paceTime)
-                return paceTime;
-            return "";
+            return parts.join(" · ");
         }
-        color: meterItem.owner.inkSoft
-        font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.90)
+        color: meterItem.atRisk ? Kirigami.Theme.neutralTextColor : meterItem.owner.inkSoft
+        font: Kirigami.Theme.smallFont
+        wrapMode: Text.WordWrap
     }
 
     function figure() {
@@ -144,12 +143,12 @@ ColumnLayout {
             return text;
         }
         if (meterItem.hasPct) {
-            if (meter.remaining !== undefined && meter.total)
+            if (meter.kind !== "window" && meter.remaining !== undefined && meter.total)
                 return Severity.humanCount(meter.remaining) + " of "
                      + Severity.humanCount(meter.total) + " left";
             return Math.round(meter.used_pct) + "% used";
         }
-        if (meter.used_pct !== undefined && meter.expired)
+        if (meter.used_pct !== undefined && (meter.expired || meterItem.resetDue))
             return i18n("was %1%", Math.round(meter.used_pct));
         if (meter.remaining !== undefined)
             return Severity.humanCount(meter.remaining) + " " + (meter.unit || "");

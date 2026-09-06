@@ -7,6 +7,7 @@ import org.kde.plasma.core as PlasmaCore
 import org.kde.plasma.plasma5support as Plasma5Support
 import org.kde.kirigami as Kirigami
 import "severity.js" as Severity
+import "providerOrder.js" as ProviderOrder
 
 /*
  * The applet owns no network code. A systemd user timer runs the collector,
@@ -36,12 +37,21 @@ PlasmoidItem {
         return configured.startsWith("/") ? configured : root.homeDir + "/" + configured;
     }
 
-    property var providers: []
+    property var snapshotProviders: []
+    readonly property var providers: ProviderOrder.sorted(root.snapshotProviders,
+                                                          Plasmoid.configuration.providerOrder)
     property var totals: ({})
     property int updatedAt: 0
     property bool loaded: false
     property string loadError: ""
     property bool refreshing: false
+    property int nowSeconds: Math.floor(Date.now() / 1000)
+    Timer {
+        interval: 30000
+        running: true
+        repeat: true
+        onTriggered: root.nowSeconds = Math.floor(Date.now() / 1000)
+    }
 
     readonly property real warnPct: Plasmoid.configuration.warnPct
     readonly property real criticalPct: Plasmoid.configuration.criticalPct
@@ -187,11 +197,12 @@ PlasmoidItem {
 
     // Bare duration ("3h", "4d") for use inside a sentence.
     function shortDuration(epochSeconds) {
-        const seconds = epochSeconds - Math.floor(Date.now() / 1000);
-        if (seconds <= 0) return i18n("moments");
-        if (seconds < 5400) return i18n("%1m", Math.round(seconds / 60));
-        if (seconds < 172800) return i18n("%1h", Math.round(seconds / 3600));
-        return i18n("%1d", Math.round(seconds / 86400));
+        const minutes = Math.max(0, Math.ceil((epochSeconds - root.nowSeconds) / 60));
+        if (minutes <= 0) return i18n("moments");
+        if (minutes < 60) return i18n("%1m", minutes);
+        const hours = Math.floor(minutes / 60);
+        if (hours < 24) return i18n("%1h %2m", hours, minutes % 60);
+        return i18n("%1d %2h", Math.floor(hours / 24), hours % 24);
     }
 
     function countdown(epochSeconds) {
@@ -245,7 +256,7 @@ PlasmoidItem {
         }
         try {
             const data = JSON.parse(text);
-            root.providers = data.providers || [];
+            root.snapshotProviders = data.providers || [];
             root.totals = data.totals || ({});
             root.updatedAt = data.updated_at || 0;
             root.loaded = true;

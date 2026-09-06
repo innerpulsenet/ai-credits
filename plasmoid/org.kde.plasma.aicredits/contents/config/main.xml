@@ -5,6 +5,10 @@
                           http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
   <kcfgfile name=""/>
   <group name="General">
+    <entry name="providerOrder" type="String">
+      <label>Provider IDs in display order</label>
+      <default></default>
+    </entry>
     <entry name="statePath" type="String">
       <label>Path to the snapshot written by the aicredits daemon</label>
       <default>.local/state/aicredits/state.json</default>

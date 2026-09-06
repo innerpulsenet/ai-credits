@@ -169,3 +169,21 @@ credentials are available. Every adapter retains its last good result and marks
 it stale if a refresh fails. Subscription renewal dates and costs are optional
 and editable from the widget's configuration window. Subscription quota meters
 calculate cycle-aware burn-rate pacing and time-to-exhaustion estimates.
+
+### Automatic recovery
+
+The timer checks for due work every two minutes. Healthy providers retain their
+configured intervals; failed, stale, and reset windows retry after two minutes.
+Cached readings remain marked stale until recovery succeeds.
+
+Claude automatically renews expired local OAuth credentials by starting the
+installed client in safe mode with empty print input, then retries the usage API.
+This sends no model prompt and leaves credential rotation to Claude Code.
+Nous uses the installed Hermes token resolver, including its credential locks;
+set `providers.nous.hermes_dir` for a nonstandard Hermes installation.
+Codex, Grok, Alibaba, and Antigravity already query their installed clients on
+scheduled polls; OpenRouter and Z.ai query their APIs directly.
+
+Network outages are retried automatically. Revoked logins, missing credentials,
+and vendor changes that break a client's interface can still require repair;
+the collector preserves the last reading without presenting it as current.

@@ -21,6 +21,8 @@ Canvas {
 
     visible: hasVariation
     opacity: 0.9
+    onWidthChanged: requestPaint()
+    onHeightChanged: requestPaint()
     onPointsChanged: requestPaint()
     onStrokeColorChanged: requestPaint()
 

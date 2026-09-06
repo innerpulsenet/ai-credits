@@ -14,6 +14,7 @@ which *buys credits*, and nothing here may go near it.
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 import urllib.error
 import urllib.request
@@ -43,6 +44,23 @@ def _token(settings: dict[str, Any]) -> tuple[str | None, str]:
         return None, base
     state = (data.get("providers") or {}).get("nous") or {}
     return state.get("access_token"), state.get("portal_base_url") or base
+
+
+def _refresh_login(settings: dict[str, Any]) -> None:
+    """Use Hermes' refresh/locking implementation, keeping secrets off stdout."""
+    root = Path(settings.get("hermes_dir") or
+                Path.home() / ".hermes" / "hermes-agent").expanduser()
+    if "auth_file" in settings:
+        return  # Explicit external credentials are not Hermes' managed login.
+    try:
+        subprocess.run(
+            [str(root / "venv/bin/python"), "-c",
+             "from hermes_cli.auth import resolve_nous_access_token; "
+             "resolve_nous_access_token(refresh_skew_seconds=3600)"],
+            cwd=root, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, timeout=int(settings.get("timeout", 15)) + 10)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def _get(url: str, token: str, timeout: int) -> dict[str, Any]:
@@ -99,6 +117,17 @@ def _meters(payload: dict[str, Any]) -> list[Meter]:
     return meters
 
 
+def _plan(payload: dict[str, Any]) -> str | None:
+    subscription = payload.get("subscription")
+    subscription = subscription if isinstance(subscription, dict) else {}
+    # /api/oauth/account publishes the billing plan here. Numeric tiers and
+    # purchasingPower.tierName describe other concepts, not the subscription.
+    for value in (subscription.get("plan"), subscription.get("name"), payload.get("plan")):
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
 @register
 class Nous(Provider):
     id = "nous"
@@ -107,6 +136,8 @@ class Nous(Provider):
 
     def poll(self, settings: dict[str, Any]) -> Reading:
         label = settings.get("label", self.label)
+        if not secrets.get("nous"):
+            _refresh_login(settings)
         token, base = _token(settings)
         if not token:
             return error_reading(self.id, label,
@@ -125,7 +156,7 @@ class Nous(Provider):
                 errors.append(f"{path} -> HTTP {exc.code}")
                 if exc.code in (401, 403):
                     return error_reading(self.id, label,
-                                         f"token rejected ({exc.code}) — re-run `hermes` to refresh",
+                                         f"token rejected ({exc.code}) after automatic login refresh",
                                          status=AUTH_NEEDED, url=settings.get("url"))
             except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
                 errors.append(f"{path} -> {type(exc).__name__}")
@@ -136,4 +167,4 @@ class Nous(Provider):
                                  url=settings.get("url"))
         return Reading(id=self.id, label=label, status=OK, source=self.source,
                        fetched_at=int(time.time()), meters=meters, url=settings.get("url"),
-                       plan=str(merged.get("plan") or (merged.get("subscription") or {}).get("name") or "") or None)
+                       plan=_plan(merged))

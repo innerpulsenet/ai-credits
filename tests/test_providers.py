@@ -132,6 +132,7 @@ class TestTrend(unittest.TestCase):
     def test_projects_exhaustion_within_the_window(self):
         out = trend.project(self.POINTS, 40.0, 7200, resets_at=7200 + 100_000)
         self.assertEqual(out["exhausts_at"], 21600)
+        self.assertEqual(out["projected_pct"], 457)
 
     def test_projects_pace_when_window_resets_first(self):
         out = trend.project(self.POINTS, 40.0, 7200, resets_at=7200 + 3600)

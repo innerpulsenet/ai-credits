@@ -54,11 +54,9 @@ def project(points: list[tuple[int, float]], current_pct: float, now: int,
     if seconds_left <= 0:
         return None
     exhausts_at = int(now + seconds_left)
-    if resets_at and exhausts_at < resets_at:
-        return {"projected_pct": 100, "exhausts_at": exhausts_at}
     if resets_at:
         seconds_to_reset = max(0, resets_at - now)
-        projected_pct = min(100.0, current_pct + slope * seconds_to_reset)
+        projected_pct = current_pct + slope * seconds_to_reset
         if projected_pct >= current_pct + 1.0:
             return {"projected_pct": round(projected_pct), "exhausts_at": exhausts_at}
     elif seconds_left <= 90 * 86400:

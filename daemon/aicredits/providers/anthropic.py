@@ -21,6 +21,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -206,12 +208,43 @@ def _local_oauth_token(path: Path = CREDENTIALS) -> str | None:
     return None
 
 
-def _local_plan(path: Path = CREDENTIALS) -> str | None:
+def _refresh_local_login(settings: dict[str, Any]) -> str | None:
+    """Let Claude rotate its own credentials, without submitting a model turn.
+
+    Empty print input exits with an input error *after* authentication startup.
+    Safe mode disables user hooks/plugins; a private cwd avoids project state.
+    Credentials remain entirely managed (and locked) by the installed client.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="aicredits-claude-") as cwd:
+            subprocess.run(
+                [str(settings.get("command") or "claude"), "--safe-mode",
+                 "--print", "--tools", ""],
+                input="", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                text=True, cwd=cwd, timeout=int(settings.get("timeout") or 30))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return _local_oauth_token()
+
+
+def _local_plan(path: Path = CREDENTIALS,
+                config_path: Path = CLAUDE_CONFIG) -> str | None:
+    """Older credentials carry a plan; native clients cache it in the profile."""
     try:
         oauth = json.loads(path.read_text()).get("claudeAiOauth") or {}
         plan = oauth.get("subscriptionType")
-        return str(plan) if plan else None
-    except (OSError, json.JSONDecodeError, TypeError):
+        if plan:
+            return str(plan)
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    try:
+        account = json.loads(config_path.read_text()).get("oauthAccount") or {}
+        # Explicit organization classifications only: billing type and a
+        # generic rate-limit tier do not distinguish paid subscription levels.
+        return {"claude_pro": "Pro", "claude_max": "Max",
+                "claude_team": "Team", "claude_enterprise": "Enterprise",
+                "claude_free": "Free"}.get(account.get("organizationType"))
+    except (OSError, ValueError, TypeError, AttributeError):
         return None
 
 
@@ -274,7 +307,10 @@ class Claude(Provider):
 
     def poll(self, settings: dict[str, Any]) -> Reading:
         label = settings.get("label", self.label)
-        token = secrets.get("claude") or _local_oauth_token()
+        supplied = secrets.get("claude")
+        token = supplied or _local_oauth_token()
+        if not token:
+            token = _refresh_local_login(settings)
         if token:
             try:
                 payload = _oauth_usage(token)
@@ -283,8 +319,23 @@ class Claude(Provider):
                     return Reading(id=self.id, label=label, status=OK, source="http",
                                    fetched_at=int(time.time()), meters=meters,
                                    url=settings.get("url"), plan=_local_plan())
-            except (urllib.error.URLError, json.JSONDecodeError, ValueError, TimeoutError):
-                pass    # fall through to transcript accounting
+            except urllib.error.HTTPError as exc:
+                if exc.code == 401:
+                    # Also recover if a saved override has gone stale: the
+                    # configured client's login is a usable fallback.
+                    token = _refresh_local_login(settings)
+                    if token:
+                        try:
+                            meters = _meters_from_oauth(_oauth_usage(token))
+                            if meters:
+                                return Reading(id=self.id, label=label, status=OK,
+                                               source="http", fetched_at=int(time.time()),
+                                               meters=meters, url=settings.get("url"),
+                                               plan=_local_plan())
+                        except (urllib.error.URLError, ValueError, TimeoutError):
+                            pass
+            except (urllib.error.URLError, ValueError, TimeoutError):
+                pass
         meters, fetched_at = _cached_usage()
         if meters:
             return Reading(id=self.id, label=label, status=OK, source="local-log",

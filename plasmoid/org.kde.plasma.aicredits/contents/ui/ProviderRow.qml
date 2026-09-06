@@ -7,8 +7,7 @@ import org.kde.plasma.components as PlasmaComponents
 import "severity.js" as Severity
 
 /*
- * One provider card. Elevated micro-surface with clear visual hierarchy,
- * pill badges, 6px capsule progress bars, and high-contrast typography.
+ * A quiet provider header followed by the usage windows.
  */
 Item {
     id: row
@@ -18,21 +17,11 @@ Item {
     property bool showSeparator: false
 
     readonly property bool attention: Severity.needsAttention(provider.status)
-    readonly property bool hasFigure: provider.worst_pct !== undefined && !row.attention
-    readonly property string level: Severity.of(row.provider.worst_pct,
-                                                row.owner.warnPct, row.owner.criticalPct)
-    readonly property bool isCritical: hasFigure && row.provider.worst_pct >= row.owner.criticalPct
-    readonly property bool isWarning: hasFigure && row.provider.worst_pct >= row.owner.warnPct && !row.isCritical
     readonly property bool isImminentRenewal: !!(row.provider.renewal && row.provider.renewal.days_until <= 3)
 
     readonly property string planText: {
-        if (row.attention)
-            return row.owner.statusLabel(row.provider.status);
         const p = row.provider.plan || "";
         if (!p)
-            return "";
-        // Suppress redundant plan tag if identical to provider name
-        if (p.toLowerCase() === String(row.provider.label || "").toLowerCase())
             return "";
         return p;
     }
@@ -53,63 +42,10 @@ Item {
         implicitHeight: body.implicitHeight + Math.round(Kirigami.Units.smallSpacing * 2.4)
         radius: row.owner.radius
 
-        gradient: Gradient {
-            GradientStop {
-                position: 0.0
-                color: row.attention
-                       ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.10)
-                       : (row.isCritical
-                          ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.08)
-                          : (row.isWarning
-                             ? Qt.rgba(Kirigami.Theme.neutralTextColor.r, Kirigami.Theme.neutralTextColor.g, Kirigami.Theme.neutralTextColor.b, 0.06)
-                             : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, hover.hovered ? 0.075 : 0.048)))
-            }
-            GradientStop {
-                position: 1.0
-                color: row.attention
-                       ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.04)
-                       : (row.isCritical
-                          ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.03)
-                          : (row.isWarning
-                             ? Qt.rgba(Kirigami.Theme.neutralTextColor.r, Kirigami.Theme.neutralTextColor.g, Kirigami.Theme.neutralTextColor.b, 0.02)
-                             : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, hover.hovered ? 0.040 : 0.022)))
-            }
-        }
-
+        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g,
+                       Kirigami.Theme.textColor.b, hover.hovered ? 0.045 : 0.025)
         border.width: 1
-        border.color: row.attention ? Qt.rgba(Kirigami.Theme.negativeTextColor.r,
-                                              Kirigami.Theme.negativeTextColor.g,
-                                              Kirigami.Theme.negativeTextColor.b, 0.35)
-                    : (row.isCritical ? Qt.rgba(Kirigami.Theme.negativeTextColor.r,
-                                                Kirigami.Theme.negativeTextColor.g,
-                                                Kirigami.Theme.negativeTextColor.b, 0.28)
-                    : (row.isWarning ? Qt.rgba(Kirigami.Theme.neutralTextColor.r,
-                                               Kirigami.Theme.neutralTextColor.g,
-                                               Kirigami.Theme.neutralTextColor.b, 0.24)
-                    : (hover.hovered ? row.owner.cardBorderHover : row.owner.cardBorder)))
-
-        Behavior on border.color { ColorAnimation { duration: Kirigami.Units.shortDuration } }
-
-        // Subtle 1px specular light chamfer on the top edge of the card
-        Rectangle {
-            id: topHighlight
-            anchors {
-                left: parent.left
-                right: parent.right
-                top: parent.top
-                leftMargin: 1
-                rightMargin: 1
-            }
-            height: 1
-            radius: parent.radius
-            color: row.attention
-                   ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.28)
-                   : (row.isCritical
-                      ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.22)
-                      : (row.isWarning
-                         ? Qt.rgba(Kirigami.Theme.neutralTextColor.r, Kirigami.Theme.neutralTextColor.g, Kirigami.Theme.neutralTextColor.b, 0.18)
-                         : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, hover.hovered ? 0.13 : 0.075)))
-        }
+        border.color: row.owner.cardBorder
 
         ColumnLayout {
             id: body
@@ -134,6 +70,7 @@ Item {
 
                     PlasmaComponents.Label {
                         text: row.provider.label
+                        Layout.maximumWidth: Kirigami.Units.gridUnit * 10
                         color: row.owner.ink
                         font.weight: Font.DemiBold
                         font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.05)
@@ -142,101 +79,37 @@ Item {
 
                     Rectangle {
                         visible: row.planText !== ""
-                        implicitHeight: Math.round(planLabel.implicitHeight + 4)
-                        implicitWidth: Math.round(planLabel.implicitWidth + Kirigami.Units.smallSpacing * 1.6)
-                        radius: row.owner.badgeRadius
-                        gradient: Gradient {
-                            GradientStop {
-                                position: 0.0
-                                color: row.attention
-                                       ? Qt.rgba(Kirigami.Theme.neutralTextColor.r, Kirigami.Theme.neutralTextColor.g, Kirigami.Theme.neutralTextColor.b, 0.20)
-                                       : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.09)
-                            }
-                            GradientStop {
-                                position: 1.0
-                                color: row.attention
-                                       ? Qt.rgba(Kirigami.Theme.neutralTextColor.r, Kirigami.Theme.neutralTextColor.g, Kirigami.Theme.neutralTextColor.b, 0.12)
-                                       : Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.05)
-                            }
-                        }
+                        implicitHeight: planLabel.implicitHeight + 4
+                        implicitWidth: Math.min(planLabel.implicitWidth,
+                                                Kirigami.Units.gridUnit * 7) + 12
+                        radius: 4
+                        color: Qt.rgba(Kirigami.Theme.textColor.r,
+                                       Kirigami.Theme.textColor.g,
+                                       Kirigami.Theme.textColor.b, 0.06)
                         border.width: 1
-                        border.color: row.attention ? Qt.rgba(Kirigami.Theme.neutralTextColor.r,
-                                                              Kirigami.Theme.neutralTextColor.g,
-                                                              Kirigami.Theme.neutralTextColor.b, 0.35)
-                                                    : row.owner.badgeBorder
+                        border.color: row.owner.cardBorder
 
                         PlasmaComponents.Label {
                             id: planLabel
                             anchors.centerIn: parent
+                            width: Math.min(implicitWidth, Kirigami.Units.gridUnit * 7)
                             text: row.planText.toUpperCase()
-                            color: row.attention ? Kirigami.Theme.neutralTextColor : row.owner.inkSoft
-                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82)
-                            font.letterSpacing: 0.8
+                            color: row.owner.inkSoft
+                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.85)
                             font.weight: Font.DemiBold
-                            font.capitalization: Font.AllUppercase
+                            font.letterSpacing: 0.6
+                            elide: Text.ElideRight
                         }
+                    }
+
+                    PlasmaComponents.Label {
+                        visible: row.attention
+                        text: row.owner.statusLabel(row.provider.status)
+                        color: Kirigami.Theme.neutralTextColor
+                        font: Kirigami.Theme.smallFont
                     }
 
                     Item { Layout.fillWidth: true }
-                }
-
-                ColumnLayout {
-                    spacing: 1
-                    Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-                    Layout.preferredWidth: Math.round(row.owner.figureSize * 3.2)
-
-                    RowLayout {
-                        spacing: 1
-                        Layout.alignment: Qt.AlignRight
-
-                        PlasmaComponents.Label {
-                            visible: row.hasFigure
-                            text: Math.round(row.provider.worst_pct || 0)
-                            color: row.owner.usageColor(row.provider.worst_pct)
-                            font.pixelSize: row.owner.figureSize
-                            font.weight: Font.Bold
-                            font.letterSpacing: -0.5
-                        }
-
-                        PlasmaComponents.Label {
-                            visible: row.hasFigure
-                            text: "%"
-                            color: row.owner.usageColor(row.provider.worst_pct)
-                            font.pixelSize: Math.round(row.owner.figureSize * 0.52)
-                            font.weight: Font.DemiBold
-                            Layout.alignment: Qt.AlignBottom
-                            Layout.bottomMargin: Math.round(row.owner.figureSize * 0.12)
-                        }
-
-                        PlasmaComponents.Label {
-                            visible: !row.hasFigure
-                            text: row.spendFigure()
-                            color: row.attention ? row.owner.inkSoft : row.owner.ink
-                            font.pixelSize: Math.round(row.owner.figureSize * 0.65)
-                            font.weight: Font.DemiBold
-                        }
-                    }
-
-                    RowLayout {
-                        spacing: Kirigami.Units.smallSpacing
-                        Layout.alignment: Qt.AlignRight
-
-                        PlasmaComponents.Label {
-                            visible: row.hasFigure && text !== ""
-                            text: (row.provider.worst_label || "").toUpperCase()
-                            color: row.owner.inkSoft
-                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.80)
-                            font.letterSpacing: 0.6
-                            font.capitalization: Font.AllUppercase
-                        }
-
-                        Sparkline {
-                            points: row.provider.spark || []
-                            strokeColor: row.owner.usageColor(row.provider.worst_pct)
-                            implicitWidth: Kirigami.Units.gridUnit * 2.8
-                            implicitHeight: Math.round(Kirigami.Units.gridUnit * 0.72)
-                        }
-                    }
                 }
 
                 PlasmaComponents.ToolButton {
@@ -255,11 +128,15 @@ Item {
             }
 
             Repeater {
-                model: row.provider.meters || []
+                model: (row.provider.meters || []).slice().sort((a, b) => {
+                    const key = m => String(m.label).replace(/Weekly/gi, "7d");
+                    return key(a).localeCompare(key(b));
+                })
 
                 delegate: MeterBar {
                     required property var modelData
                     meter: modelData
+                    stale: row.attention
                     owner: row.owner
                     warnPct: row.owner.warnPct
                     criticalPct: row.owner.criticalPct
@@ -318,10 +195,4 @@ Item {
         }
     }
 
-    function spendFigure() {
-        for (const meter of (row.provider.meters || []))
-            if (meter.amount_usd !== undefined)
-                return "$" + Math.round(meter.amount_usd);
-        return row.attention ? "—" : "";
-    }
 }

@@ -39,7 +39,7 @@ def _finalize(reading: Reading, general: dict[str, Any], now: int) -> Reading:
         reading.message = f"{reading.message}; {text}" if reading.message else text
 
     if expired:
-        note("window has reset since this reading — run the CLI to refresh")
+        note("window has reset; automatic refresh will retry")
     elif age is not None and age > stale_after:
         note(f"data is {_age(age)} old")
     return reading
@@ -71,6 +71,7 @@ def _enrich(entry: dict[str, Any], conn, pid: str, points: int, now: int) -> dic
 
     for meter in candidates:
         meter_label = meter["label"]
+        meter["spark"] = store.spark(conn, pid, meter_label, points)
         resets_at = meter.get("resets_at")
         if not resets_at and meter_label.lower() in ("subscription", "monthly", "billing"):
             resets_at = renewal_epoch
@@ -134,7 +135,7 @@ def cmd_poll(args) -> int:
         entry = _enrich(entry, conn, pid, int(general.get("spark_points", 24)), now)
         entries.append(entry)
 
-    entries.sort(key=lambda e: (-(e.get("worst_pct") or -1), e["label"]))
+    entries.sort(key=lambda e: e["label"].casefold())
     payload = {
         "updated_at": now,
         "providers": entries,
@@ -158,6 +159,23 @@ def _from_cache(conn, pid: str, settings: dict[str, Any], failed: Reading | None
         entry = {k: v for k, v in cache.items() if not k.startswith("_")}
         last_ok = cache.get("_last_ok") or entry.get("fetched_at") or now
         entry["stale_seconds"] = max(0, now - (entry.get("fetched_at") or last_ok))
+        for meter in entry.get("meters", []):
+            if meter.get("kind") == WINDOW and meter.get("resets_at") and meter["resets_at"] <= now:
+                meter["expired"] = True
+                entry["status"] = STALE
+        active = [m for m in entry.get("meters", [])
+                  if not m.get("expired") and m.get("used_pct") is not None]
+        entry.pop("worst_pct", None)
+        entry.pop("worst_label", None)
+        if active:
+            worst = max(active, key=lambda m: m["used_pct"])
+            entry["worst_pct"] = worst["used_pct"]
+            entry["worst_label"] = worst["label"]
+        if entry["stale_seconds"] > int(general.get("stale_after", 21600)):
+            entry["status"] = STALE
+        if cache.get("_status") not in (OK, STALE):
+            entry["status"] = STALE
+            entry["message"] = cache.get("_message")
         if failed is not None and failed.status not in (OK, STALE):
             entry["status"] = STALE
             entry["message"] = failed.message

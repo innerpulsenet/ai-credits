@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import time
 
 SERVICE = "aicredits"
 
@@ -20,10 +21,21 @@ def available() -> bool:
 def get(account: str) -> str | None:
     if not available():
         return None
-    proc = subprocess.run(["secret-tool", "lookup", "service", SERVICE, "account", account],
-                          capture_output=True, text=True)
-    value = proc.stdout.strip()
-    return value or None
+    # The desktop keyring can briefly return an empty lookup during startup.
+    # Bound each attempt so a locked/unavailable wallet cannot stall all panes.
+    for attempt in range(2):
+        try:
+            proc = subprocess.run(
+                ["secret-tool", "lookup", "service", SERVICE, "account", account],
+                capture_output=True, text=True, timeout=5)
+            value = proc.stdout.strip()
+            if proc.returncode == 0 and value:
+                return value
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if attempt == 0:
+            time.sleep(0.2)
+    return None
 
 
 def store(account: str, value: str) -> bool:

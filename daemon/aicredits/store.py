@@ -46,11 +46,19 @@ def connect() -> sqlite3.Connection:
 def due_providers(conn: sqlite3.Connection, config: dict[str, Any],
                   now: int, force: Iterable[str] | None = None) -> list[str]:
     forced = set(force or ())
-    last = {r["provider"]: r["last_poll"] or 0 for r in conn.execute("SELECT provider, last_poll FROM polls")}
+    last = {r["provider"]: r for r in conn.execute("SELECT * FROM polls")}
     due = []
     for pid in cfg.enabled_providers(config):
         interval = int(config["providers"][pid].get("interval", 900))
-        if pid in forced or now - last.get(pid, 0) >= interval:
+        row = last.get(pid)
+        if row:
+            cached_reading = json.loads(row["last_good"] or "{}")
+            expired = any(m.get("resets_at") and m["resets_at"] <= now
+                          for m in cached_reading.get("meters", [])
+                          if m.get("kind") == WINDOW)
+            if row["status"] != OK or expired:
+                interval = min(interval, 120)
+        if pid in forced or not row or now - (row["last_poll"] or 0) >= interval:
             due.append(pid)
     return due
 
