@@ -114,7 +114,8 @@ Thresholds and poll intervals:
 bin/aicredits config get general
 bin/aicredits config set general.warn_pct 90        # amber
 bin/aicredits config set general.critical_pct 95    # red + notification
-bin/aicredits config set providers.claude.interval 900
+# Default poll interval is 120s (same as the systemd timer) for every provider.
+bin/aicredits config set providers.claude.interval 300
 ```
 
 ## Working on the plasmoid
@@ -172,8 +173,8 @@ calculate cycle-aware burn-rate pacing and time-to-exhaustion estimates.
 
 ### Automatic recovery
 
-The timer checks for due work every two minutes. Healthy providers retain their
-configured intervals; failed, stale, and reset windows retry after two minutes.
+The timer checks for due work every two minutes. Every provider defaults to
+that same interval. Failed, stale, and reset windows also retry after two minutes.
 Cached readings remain marked stale until recovery succeeds.
 
 Claude automatically renews expired local OAuth credentials by starting the

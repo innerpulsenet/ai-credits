@@ -49,7 +49,7 @@ def due_providers(conn: sqlite3.Connection, config: dict[str, Any],
     last = {r["provider"]: r for r in conn.execute("SELECT * FROM polls")}
     due = []
     for pid in cfg.enabled_providers(config):
-        interval = int(config["providers"][pid].get("interval", 900))
+        interval = int(config["providers"][pid].get("interval", 120))
         row = last.get(pid)
         if row:
             cached_reading = json.loads(row["last_good"] or "{}")

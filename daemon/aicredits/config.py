@@ -20,17 +20,18 @@ STATE_PATH = STATE_DIR / "state.json"
 DB_PATH = DATA_DIR / "history.db"
 
 # id -> (label, dashboard url, default poll interval in seconds)
-# Local-log providers poll cheaply and often; HTTP providers stay well below
-# whatever the vendor's own client would do.
+# The user timer fires every 2 minutes. HTTP and local-file adapters are cheap
+# enough to run on every tick so the panel ages stay comparable. CLI adapters
+# (Alibaba, Antigravity) finish in a few seconds and use the same cadence.
 PROVIDER_DEFAULTS: dict[str, tuple[str, str, int]] = {
     "codex":       ("Codex",        "https://chatgpt.com/codex/settings/usage",   120),
     "grok":        ("SuperGrok",    "https://grok.com/supergrok",                 120),
-    "zai":         ("ZCode GLM",    "https://z.ai/manage-apikey/apikey-list",     900),
-    "claude":      ("Claude",       "https://claude.ai/settings/usage",           900),
-    "alibaba":     ("Alibaba",      "https://bailian.console.aliyun.com/",        900),
-    "openrouter":  ("OpenRouter",   "https://openrouter.ai/credits",              1800),
-    "nous":        ("Nous Portal",  "https://portal.nousresearch.com/billing",    1800),
-    "antigravity": ("Antigravity",  "https://antigravity.google/",                1800),
+    "zai":         ("ZCode GLM",    "https://z.ai/manage-apikey/apikey-list",     120),
+    "claude":      ("Claude",       "https://claude.ai/settings/usage",           120),
+    "alibaba":     ("Alibaba",      "https://bailian.console.aliyun.com/",        120),
+    "openrouter":  ("OpenRouter",   "https://openrouter.ai/credits",              120),
+    "nous":        ("Nous Portal",  "https://portal.nousresearch.com/billing",    120),
+    "antigravity": ("Antigravity",  "https://antigravity.google/",                120),
 }
 
 # Fetch-path defaults. Adapters treat a missing key as these values; they are
