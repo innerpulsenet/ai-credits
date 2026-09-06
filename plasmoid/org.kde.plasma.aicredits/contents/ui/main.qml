@@ -67,6 +67,22 @@ PlasmoidItem {
         return count;
     }
 
+    readonly property int criticalCount: {
+        let count = 0;
+        for (const provider of root.providers)
+            if (provider.status === "ok" && provider.worst_pct !== undefined && provider.worst_pct >= root.criticalPct)
+                count += 1;
+        return count;
+    }
+
+    readonly property int warningCount: {
+        let count = 0;
+        for (const provider of root.providers)
+            if (provider.status === "ok" && provider.worst_pct !== undefined && provider.worst_pct >= root.warnPct && provider.worst_pct < root.criticalPct)
+                count += 1;
+        return count;
+    }
+
     // ---- tokens -------------------------------------------------------
     // Named for role, not value, and derived from the active Plasma theme so
     // the applet follows the user's colour scheme instead of fighting it.
@@ -76,24 +92,41 @@ PlasmoidItem {
                                              Kirigami.Theme.textColor.b, 0.62)
     readonly property color line: Qt.rgba(Kirigami.Theme.textColor.r,
                                           Kirigami.Theme.textColor.g,
-                                          Kirigami.Theme.textColor.b, 0.10)
+                                          Kirigami.Theme.textColor.b, 0.08)
     readonly property color track: Qt.rgba(Kirigami.Theme.textColor.r,
                                            Kirigami.Theme.textColor.g,
-                                           Kirigami.Theme.textColor.b, 0.13)
+                                           Kirigami.Theme.textColor.b, 0.14)
+    readonly property color cardBackground: Qt.rgba(Kirigami.Theme.textColor.r,
+                                                    Kirigami.Theme.textColor.g,
+                                                    Kirigami.Theme.textColor.b, 0.035)
+    readonly property color cardBorder: Qt.rgba(Kirigami.Theme.textColor.r,
+                                                Kirigami.Theme.textColor.g,
+                                                Kirigami.Theme.textColor.b, 0.08)
+    readonly property color cardBorderHover: Qt.rgba(Kirigami.Theme.textColor.r,
+                                                     Kirigami.Theme.textColor.g,
+                                                     Kirigami.Theme.textColor.b, 0.18)
+    readonly property color badgeBackground: Qt.rgba(Kirigami.Theme.textColor.r,
+                                                     Kirigami.Theme.textColor.g,
+                                                     Kirigami.Theme.textColor.b, 0.08)
+    readonly property color badgeBorder: Qt.rgba(Kirigami.Theme.textColor.r,
+                                                 Kirigami.Theme.textColor.g,
+                                                 Kirigami.Theme.textColor.b, 0.14)
+
     // Horizontal breathing room. Every part of the popup indents by this, so
     // the title, the provider names and the footer align on one edge.
-    readonly property int inset: Math.round(Kirigami.Units.gridUnit * 0.9)
+    readonly property int inset: Math.round(Kirigami.Units.gridUnit * 0.75)
 
     // Corner radius, defined here rather than taken from Kirigami so it is
     // consistent across the bars, the hover highlight and the sparkline
     // regardless of which Kirigami version is installed.
-    readonly property int radius: Math.round(Kirigami.Units.gridUnit * 0.35)
+    readonly property int radius: Math.round(Kirigami.Units.gridUnit * 0.45)
+    readonly property int badgeRadius: Math.round(Kirigami.Units.gridUnit * 0.22)
     readonly property color hoverColor: Qt.rgba(Kirigami.Theme.textColor.r,
                                                 Kirigami.Theme.textColor.g,
-                                                Kirigami.Theme.textColor.b, 0.06)
+                                                Kirigami.Theme.textColor.b, 0.065)
 
     // One display size, used only for the figure that matters on each row.
-    readonly property int figureSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.35)
+    readonly property int figureSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.38)
 
     function mixColor(from, to, fraction) {
         const f = Math.max(0, Math.min(1, fraction));

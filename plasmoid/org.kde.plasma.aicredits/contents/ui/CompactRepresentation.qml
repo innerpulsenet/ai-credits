@@ -47,7 +47,7 @@ Item {
         onPaint: {
             const ctx = getContext("2d");
             ctx.reset();
-            const thickness = Math.max(2, width * 0.13);
+            const thickness = Math.max(2.5, width * 0.135);
             const radius = (width - thickness) / 2;
             if (radius <= 0)
                 return;
@@ -78,10 +78,10 @@ Item {
         anchors.centerIn: parent
         visible: compact.pct >= 0 && compact.height >= Kirigami.Units.iconSizes.small
         text: Math.round(compact.pct)
-        color: compact.plasmoidItem.ink
-        font.pixelSize: Math.max(7, Math.round(compact.height * 0.40))
-        font.weight: Font.DemiBold
-        font.letterSpacing: -0.4
+        color: compact.pct >= compact.plasmoidItem.criticalPct ? compact.arcColor : compact.plasmoidItem.ink
+        font.pixelSize: Math.max(7, Math.round(compact.height * (compact.pct >= 100 ? 0.34 : 0.40)))
+        font.weight: Font.Bold
+        font.letterSpacing: -0.5
     }
 
     // Nothing readable yet: say so rather than drawing an empty ring, which

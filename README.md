@@ -89,7 +89,8 @@ Record what a subscription costs, so the popup footer can total it:
 
 Right-click the widget, choose **Configure AI Credits**, and use the
 **Subscriptions** page. OpenRouter is intentionally omitted because its credit
-balance is prepaid. The same values can be managed from the terminal:
+balance is prepaid. Supported billing cadences include daily, weekly, monthly,
+quarterly, and annual. The same values can be managed from the terminal:
 
 ```bash
 bin/aicredits config set providers.claude.renewal.date 2026-09-20
@@ -157,7 +158,7 @@ Each of these failed **silently** — no error, just wrong output:
 python3 -m unittest discover -s tests
 ```
 
-41 tests, no dependencies. Parsers run against redacted copies of real CLI
+42 tests, no dependencies. Parsers run against redacted copies of real CLI
 output in `tests/fixtures/`, so they work offline; each provider's quirks
 (remaining-vs-used, ratio-vs-percent, ms-vs-seconds) are pinned by a test.
 
@@ -166,4 +167,5 @@ output in `tests/fixtures/`, so they work offline; each provider's quirks
 All eight providers report live when their authenticated clients, APIs, or
 credentials are available. Every adapter retains its last good result and marks
 it stale if a refresh fails. Subscription renewal dates and costs are optional
-and editable from the widget's configuration window.
+and editable from the widget's configuration window. Subscription quota meters
+calculate cycle-aware burn-rate pacing and time-to-exhaustion estimates.

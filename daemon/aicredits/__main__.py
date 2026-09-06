@@ -63,13 +63,26 @@ def _enrich(entry: dict[str, Any], conn, pid: str, points: int, now: int) -> dic
         return entry
     entry["worst_label"] = primary["label"]
     entry["spark"] = store.spark(conn, pid, primary["label"], points)
-    rows = conn.execute(
-        "SELECT ts, used_pct FROM readings WHERE provider=? AND meter=? AND ts > ?"
-        " ORDER BY ts", (pid, primary["label"], now - 7 * 86400)).fetchall()
-    projection = trend.project([(r["ts"], r["used_pct"]) for r in rows],
-                               primary["used_pct"], now, primary.get("resets_at"))
-    if projection:
-        primary["projection"] = projection
+
+    renewal = entry.get("renewal")
+    renewal_epoch = None
+    if renewal and renewal.get("days_until") is not None:
+        renewal_epoch = now + int(renewal["days_until"]) * 86400
+
+    for meter in candidates:
+        meter_label = meter["label"]
+        resets_at = meter.get("resets_at")
+        if not resets_at and meter_label.lower() in ("subscription", "monthly", "billing"):
+            resets_at = renewal_epoch
+
+        rows = conn.execute(
+            "SELECT ts, used_pct FROM readings WHERE provider=? AND meter=? AND ts > ?"
+            " ORDER BY ts", (pid, meter_label, now - 7 * 86400)).fetchall()
+        projection = trend.project([(r["ts"], r["used_pct"]) for r in rows],
+                                   meter["used_pct"], now, resets_at)
+        if projection:
+            meter["projection"] = projection
+
     return entry
 
 
@@ -115,10 +128,10 @@ def cmd_poll(args) -> int:
             entry = fresh[pid].to_json(now)
         else:
             entry = _from_cache(conn, pid, settings, fresh.get(pid), now, general)
-        entry = _enrich(entry, conn, pid, int(general.get("spark_points", 24)), now)
         renewal = renewals.describe(settings)
         if renewal:
             entry["renewal"] = renewal
+        entry = _enrich(entry, conn, pid, int(general.get("spark_points", 24)), now)
         entries.append(entry)
 
     entries.sort(key=lambda e: (-(e.get("worst_pct") or -1), e["label"]))

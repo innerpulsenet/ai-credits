@@ -52,15 +52,135 @@ QQC2.ScrollView {
     }
 
     component GlassCombo: QQC2.ComboBox {
-        leftPadding: Kirigami.Units.largeSpacing
+        id: combo
         implicitHeight: Kirigami.Units.gridUnit * 2.25
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.gridUnit * 2.2
+
+        contentItem: QQC2.Label {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.leftMargin: combo.leftPadding
+            anchors.rightMargin: combo.rightPadding
+            text: combo.displayText
+            font: combo.font
+            color: Kirigami.Theme.textColor
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        indicator: Kirigami.Icon {
+            anchors.right: combo.right
+            anchors.rightMargin: Kirigami.Units.largeSpacing
+            anchors.verticalCenter: combo.verticalCenter
+            implicitWidth: Kirigami.Units.iconSizes.small
+            implicitHeight: implicitWidth
+            source: "arrow-down"
+            color: combo.hovered ? Kirigami.Theme.highlightColor : Kirigami.Theme.disabledTextColor
+        }
+
         background: Rectangle {
             radius: Math.round(Kirigami.Units.gridUnit * 0.45)
-            color: parent.activeFocus ? page.glassHover : page.glass
-            border.width: parent.activeFocus ? 2 : 1
-            border.color: parent.activeFocus ? Kirigami.Theme.highlightColor : page.hairline
+            color: combo.activeFocus ? page.glassHover : page.glass
+            border.width: combo.activeFocus ? 2 : 1
+            border.color: combo.activeFocus ? Kirigami.Theme.highlightColor : page.hairline
             Behavior on color { ColorAnimation { duration: Kirigami.Units.shortDuration } }
         }
+
+        delegate: QQC2.ItemDelegate {
+            id: itemDel
+            width: combo.width
+            contentItem: QQC2.Label {
+                text: modelData
+                color: itemDel.highlighted ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                font: combo.font
+                elide: Text.ElideRight
+                verticalAlignment: Text.AlignVCenter
+            }
+            highlighted: combo.highlightedIndex === index
+            background: Rectangle {
+                color: itemDel.highlighted ? Kirigami.Theme.highlightColor : "transparent"
+                radius: 4
+            }
+        }
+
+        popup: QQC2.Popup {
+            y: combo.height + 2
+            width: combo.width
+            implicitHeight: contentItem.implicitHeight + 8
+            padding: 4
+
+            contentItem: ListView {
+                clip: true
+                implicitHeight: contentHeight
+                model: combo.popup.visible ? combo.delegateModel : null
+                currentIndex: combo.highlightedIndex
+                QQC2.ScrollIndicator.vertical: QQC2.ScrollIndicator {}
+            }
+
+            background: Rectangle {
+                radius: Math.round(Kirigami.Units.gridUnit * 0.45)
+                color: Kirigami.Theme.backgroundColor
+                border.width: 1
+                border.color: page.hairline
+            }
+        }
+    }
+
+    property int editRevision: 0
+
+    function providerMeta(id) {
+        switch (id) {
+        case "codex": return { glyph: "CX", color: "#10a37f" };
+        case "claude": return { glyph: "CL", color: "#d97706" };
+        case "grok": return { glyph: "GK", color: "#9333ea" };
+        case "zai": return { glyph: "ZA", color: "#06b6d4" };
+        case "alibaba": return { glyph: "AL", color: "#f97316" };
+        case "nous": return { glyph: "NP", color: "#3b82f6" };
+        case "antigravity": return { glyph: "AG", color: "#ec4899" };
+        default: return { glyph: id.slice(0, 2).toUpperCase(), color: Kirigami.Theme.highlightColor };
+        }
+    }
+
+    function computeMonthlyEquivalent(costStr, cadence) {
+        const cost = parseFloat(costStr) || 0;
+        if (cost <= 0)
+            return 0;
+        const cad = (cadence || "monthly").toLowerCase();
+        if (cad === "daily")
+            return (cost * 365) / 12;
+        if (cad === "weekly")
+            return (cost * 52) / 12;
+        if (cad === "quarterly")
+            return cost / 3;
+        if (cad === "annual" || cad === "yearly")
+            return cost / 12;
+        return cost;
+    }
+
+    readonly property real liveTotalMonthly: {
+        const rev = page.editRevision;
+        let sum = 0;
+        for (let i = 0; i < subscriptions.count; ++i) {
+            const item = subscriptions.get(i);
+            if (item.date && item.date.trim() !== "") {
+                sum += page.computeMonthlyEquivalent(item.cost, item.cadence);
+            }
+        }
+        return sum;
+    }
+
+    readonly property int liveActiveCount: {
+        const rev = page.editRevision;
+        let count = 0;
+        for (let i = 0; i < subscriptions.count; ++i) {
+            const item = subscriptions.get(i);
+            if (item.date && item.date.trim() !== "") {
+                count++;
+            }
+        }
+        return count;
     }
 
     function quote(value) {
@@ -88,6 +208,7 @@ QQC2.ScrollView {
                 page.setEditor(id, providers[id]);
             }
             page.resultText = "";
+            page.editRevision++;
         } catch (error) {
             page.resultText = i18n("Could not read the subscription configuration.");
         }
@@ -159,26 +280,17 @@ QQC2.ScrollView {
 
         Rectangle {
             Layout.fillWidth: true
-            Layout.preferredHeight: introContent.implicitHeight + Kirigami.Units.gridUnit * 2
+            Layout.preferredHeight: introContent.implicitHeight + Kirigami.Units.gridUnit * 1.6
             radius: page.cardRadius
             color: page.glassRaised
             border.width: 1
             border.color: page.hairline
-
-            Rectangle {
-                anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
-                width: Math.round(Kirigami.Units.smallSpacing * 0.65)
-                radius: parent.radius
-                color: Kirigami.Theme.highlightColor
-                opacity: 0.8
-            }
 
             RowLayout {
                 id: introContent
                 anchors {
                     fill: parent
                     margins: Kirigami.Units.gridUnit
-                    leftMargin: Kirigami.Units.gridUnit * 1.25
                 }
                 spacing: Kirigami.Units.largeSpacing
 
@@ -204,9 +316,49 @@ QQC2.ScrollView {
                     }
                     QQC2.Label {
                         Layout.fillWidth: true
-                        text: i18n("Track the next charge and billing cycle for each plan. Blank plans stay out of renewal totals; OpenRouter is excluded because it is prepaid.")
+                        text: i18n("Track recurring plans and renewals. OpenRouter is excluded (prepaid credits).")
                         wrapMode: Text.WordWrap
                         color: Kirigami.Theme.disabledTextColor
+                    }
+                }
+
+                // Live Monthly Spend Stat Box
+                Rectangle {
+                    Layout.preferredWidth: Math.round(Kirigami.Units.gridUnit * 9.5)
+                    Layout.preferredHeight: Math.round(Kirigami.Units.gridUnit * 3.4)
+                    radius: page.cardRadius
+                    color: page.glass
+                    border.width: 1
+                    border.color: Qt.rgba(Kirigami.Theme.highlightColor.r,
+                                          Kirigami.Theme.highlightColor.g,
+                                          Kirigami.Theme.highlightColor.b, 0.25)
+
+                    ColumnLayout {
+                        anchors.centerIn: parent
+                        spacing: 1
+
+                        QQC2.Label {
+                            text: i18n("ESTIMATED MONTHLY")
+                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.78)
+                            font.letterSpacing: 0.8
+                            color: Kirigami.Theme.disabledTextColor
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+
+                        QQC2.Label {
+                            text: "$" + page.liveTotalMonthly.toFixed(2) + i18n(" / mo")
+                            font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.25)
+                            font.weight: Font.Bold
+                            color: Kirigami.Theme.highlightColor
+                            Layout.alignment: Qt.AlignHCenter
+                        }
+
+                        QQC2.Label {
+                            text: i18n("%1 of %2 Active", page.liveActiveCount, subscriptions.count)
+                            font: Kirigami.Theme.smallFont
+                            color: page.liveActiveCount > 0 ? Kirigami.Theme.positiveTextColor : Kirigami.Theme.disabledTextColor
+                            Layout.alignment: Qt.AlignHCenter
+                        }
                     }
                 }
             }
@@ -241,46 +393,70 @@ QQC2.ScrollView {
                     anchors { fill: parent; margins: Math.round(Kirigami.Units.gridUnit * 0.75) }
                     spacing: Kirigami.Units.largeSpacing
 
+                    readonly property var meta: page.providerMeta(editor.providerId)
+
                     RowLayout {
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 8.5
                         spacing: Kirigami.Units.largeSpacing
 
                         Rectangle {
-                            Layout.preferredWidth: Kirigami.Units.iconSizes.smallMedium
+                            Layout.preferredWidth: Kirigami.Units.iconSizes.medium
                             Layout.preferredHeight: width
                             radius: width / 2
-                            color: editor.date !== "" ? page.glassHover : page.glass
+                            color: editor.date !== "" ? Qt.rgba(fields.meta.color.r, fields.meta.color.g, fields.meta.color.b, 0.2)
+                                                      : page.glass
+                            border.width: 1
+                            border.color: editor.date !== "" ? fields.meta.color : page.hairline
 
                             QQC2.Label {
                                 anchors.centerIn: parent
-                                text: editor.label.slice(0, 1).toUpperCase()
-                                color: editor.date !== "" ? Kirigami.Theme.highlightColor
-                                                          : Kirigami.Theme.disabledTextColor
+                                text: fields.meta.glyph
+                                color: editor.date !== "" ? fields.meta.color : Kirigami.Theme.disabledTextColor
                                 font.weight: Font.Bold
+                                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.95)
                             }
                         }
 
                         ColumnLayout {
                             Layout.fillWidth: true
-                            spacing: 0
+                            spacing: 2
                             QQC2.Label {
                                 Layout.fillWidth: true
                                 text: editor.label
                                 font.weight: Font.DemiBold
+                                font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.05)
                                 elide: Text.ElideRight
                             }
-                            QQC2.Label {
-                                text: editor.date !== "" ? i18n("ACTIVE") : i18n("NOT RENEWING")
-                                color: editor.date !== "" ? Kirigami.Theme.positiveTextColor
-                                                          : Kirigami.Theme.disabledTextColor
-                                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82)
-                                font.letterSpacing: 0.8
+                            Rectangle {
+                                implicitHeight: Math.round(statusLabel.implicitHeight + 2)
+                                implicitWidth: Math.round(statusLabel.implicitWidth + 8)
+                                radius: 4
+                                color: editor.date !== "" ? Qt.rgba(Kirigami.Theme.positiveTextColor.r,
+                                                                    Kirigami.Theme.positiveTextColor.g,
+                                                                    Kirigami.Theme.positiveTextColor.b, 0.15)
+                                                          : page.glass
+                                border.width: 1
+                                border.color: editor.date !== "" ? Qt.rgba(Kirigami.Theme.positiveTextColor.r,
+                                                                           Kirigami.Theme.positiveTextColor.g,
+                                                                           Kirigami.Theme.positiveTextColor.b, 0.3)
+                                                                 : page.hairline
+
+                                QQC2.Label {
+                                    id: statusLabel
+                                    anchors.centerIn: parent
+                                    text: editor.date !== "" ? i18n("ACTIVE") : i18n("INACTIVE")
+                                    color: editor.date !== "" ? Kirigami.Theme.positiveTextColor
+                                                              : Kirigami.Theme.disabledTextColor
+                                    font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.75)
+                                    font.letterSpacing: 0.8
+                                    font.weight: Font.DemiBold
+                                }
                             }
                         }
                     }
 
                     ColumnLayout {
-                        spacing: Kirigami.Units.smallSpacing
+                        spacing: 2
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 8
                         QQC2.Label {
                             text: i18n("NEXT RENEWAL")
@@ -296,18 +472,32 @@ QQC2.ScrollView {
                             validator: RegularExpressionValidator {
                                 regularExpression: /(^$)|(^\d{4}-\d{2}-\d{2}$)/
                             }
-                            onTextEdited: subscriptions.setProperty(editor.index, "date", text)
+                            onTextEdited: {
+                                subscriptions.setProperty(editor.index, "date", text);
+                                page.editRevision++;
+                            }
                         }
                     }
 
                     ColumnLayout {
-                        spacing: Kirigami.Units.smallSpacing
+                        spacing: 2
                         Layout.preferredWidth: Kirigami.Units.gridUnit * 6.5
-                        QQC2.Label {
-                            text: i18n("PRICE · USD")
-                            color: Kirigami.Theme.disabledTextColor
-                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82)
-                            font.letterSpacing: 0.8
+                        RowLayout {
+                            Layout.fillWidth: true
+                            QQC2.Label {
+                                text: i18n("PRICE · USD")
+                                color: Kirigami.Theme.disabledTextColor
+                                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82)
+                                font.letterSpacing: 0.8
+                            }
+                            Item { Layout.fillWidth: true }
+                            QQC2.Label {
+                                readonly property real monthlyEq: page.computeMonthlyEquivalent(editor.cost, editor.cadence)
+                                visible: monthlyEq > 0 && editor.cadence !== "monthly"
+                                text: "≈ $" + monthlyEq.toFixed(2) + "/mo"
+                                color: Kirigami.Theme.highlightColor
+                                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.78)
+                            }
                         }
                         GlassField {
                             text: editor.cost
@@ -316,12 +506,15 @@ QQC2.ScrollView {
                             inputMethodHints: Qt.ImhFormattedNumbersOnly
                             Layout.fillWidth: true
                             validator: DoubleValidator { bottom: 0; decimals: 2 }
-                            onTextEdited: subscriptions.setProperty(editor.index, "cost", text)
+                            onTextEdited: {
+                                subscriptions.setProperty(editor.index, "cost", text);
+                                page.editRevision++;
+                            }
                         }
                     }
 
                     ColumnLayout {
-                        spacing: Kirigami.Units.smallSpacing
+                        spacing: 2
                         Layout.fillWidth: true
                         QQC2.Label {
                             text: i18n("BILLING CYCLE")
@@ -331,13 +524,19 @@ QQC2.ScrollView {
                         }
                         GlassCombo {
                             id: cadenceBox
-                            readonly property var cadenceValues: ["monthly", "quarterly", "annual", "weekly"]
-                            model: [i18n("Monthly"), i18n("Quarterly"), i18n("Annual"), i18n("Weekly")]
-                            currentIndex: Math.max(0, cadenceValues.indexOf(editor.cadence))
+                            readonly property var cadenceValues: ["monthly", "quarterly", "annual", "weekly", "daily"]
+                            model: [i18n("Monthly"), i18n("Quarterly"), i18n("Annual"), i18n("Weekly"), i18n("Daily")]
+                            currentIndex: {
+                                const idx = cadenceValues.indexOf(editor.cadence);
+                                return idx >= 0 ? idx : 0;
+                            }
                             Accessible.name: i18n("%1 billing cycle", editor.label)
                             Layout.fillWidth: true
-                            onActivated: subscriptions.setProperty(editor.index, "cadence",
-                                                                   cadenceValues[currentIndex])
+                            onActivated: {
+                                subscriptions.setProperty(editor.index, "cadence",
+                                                          cadenceValues[currentIndex]);
+                                page.editRevision++;
+                            }
                         }
                     }
                 }

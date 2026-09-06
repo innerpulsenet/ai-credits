@@ -54,48 +54,85 @@ ColumnLayout {
         id: track
         visible: meterItem.hasPct
         Layout.fillWidth: true
-        Layout.topMargin: 2
-        Layout.preferredHeight: 4
+        Layout.topMargin: 4
+        Layout.preferredHeight: 6
         radius: height / 2
-        // Alpha in the colour, not opacity on the item: an item's opacity
-        // multiplies into its children, which would fade the fill too.
-        color: meterItem.owner.track
+        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.08)
+        border.width: 1
+        border.color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.04)
 
         Rectangle {
-            width: Math.max(height, track.width * Math.min(1, (meterItem.meter.used_pct || 0) / 100))
+            readonly property real pct: Math.max(0, Math.min(100, meterItem.meter.used_pct || 0))
+            width: pct <= 0 ? 0 : Math.max(height, track.width * (pct / 100))
             height: track.height
             radius: track.radius
-            color: meterItem.owner.usageColor(meterItem.meter.used_pct)
 
-            // Kirigami durations already follow the user's animation-speed
-            // setting, so this is silent when animations are turned off.
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop {
+                    position: 0.0
+                    color: Qt.tint(meterItem.owner.usageColor(meterItem.meter.used_pct),
+                                   Qt.rgba(1, 1, 1, 0.16))
+                }
+                GradientStop {
+                    position: 1.0
+                    color: meterItem.owner.usageColor(meterItem.meter.used_pct)
+                }
+            }
+
             Behavior on width {
                 NumberAnimation {
                     duration: Kirigami.Units.longDuration
                     easing.type: Easing.OutCubic
                 }
             }
-            Behavior on color {
-                ColorAnimation { duration: Kirigami.Units.longDuration }
-            }
         }
     }
 
     PlasmaComponents.Label {
+        id: resetLabel
+        Layout.fillWidth: true
+        Layout.topMargin: 3
         visible: text !== ""
         text: {
             if (meterItem.meter.expired)
                 return i18n("window already reset");
+
+            const resetTime = meterItem.meter.resets_at
+                ? i18n("resets in %1", meterItem.owner.shortDuration(meterItem.meter.resets_at))
+                : "";
+
             const projection = meterItem.meter.projection;
-            if (projection && projection.exhausts_at)
-                return i18n("on pace to run out in %1",
-                            meterItem.owner.shortDuration(projection.exhausts_at));
-            if (meterItem.meter.resets_at)
-                return i18n("resets in %1", meterItem.owner.shortDuration(meterItem.meter.resets_at));
+            let paceTime = "";
+            if (projection) {
+                const hasExhaust = !!projection.exhausts_at;
+                const hasPct = projection.projected_pct !== undefined;
+                const timeStr = hasExhaust ? meterItem.owner.shortDuration(projection.exhausts_at) : "";
+
+                if (hasPct && hasExhaust) {
+                    const isExhaustFirst = meterItem.meter.resets_at && projection.exhausts_at < meterItem.meter.resets_at;
+                    if (isExhaustFirst) {
+                        paceTime = i18n("on pace for 100% (~%1 to empty)", timeStr);
+                    } else {
+                        paceTime = i18n("on pace for ~%1% (~%2 to empty)", projection.projected_pct, timeStr);
+                    }
+                } else if (hasPct) {
+                    paceTime = i18n("on pace for ~%1%", projection.projected_pct);
+                } else if (hasExhaust) {
+                    paceTime = i18n("~%1 to empty", timeStr);
+                }
+            }
+
+            if (resetTime && paceTime)
+                return resetTime + " · " + paceTime;
+            if (resetTime)
+                return resetTime;
+            if (paceTime)
+                return paceTime;
             return "";
         }
         color: meterItem.owner.inkSoft
-        font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)
+        font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.90)
     }
 
     function figure() {

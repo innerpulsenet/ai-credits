@@ -18,8 +18,8 @@ PlasmaExtras.Representation {
     // Sized for the denser rows. maximumHeight as well as preferredHeight: the
     // popup was ignoring the preferred value on its own and claiming height it
     // could not fill, leaving dead space under the last provider.
-    Layout.preferredHeight: Kirigami.Units.gridUnit * 38
-    Layout.maximumHeight: Kirigami.Units.gridUnit * 38
+    Layout.preferredHeight: Kirigami.Units.gridUnit * 40
+    Layout.maximumHeight: Kirigami.Units.gridUnit * 42
 
     collapseMarginsHint: true
 
@@ -27,31 +27,88 @@ PlasmaExtras.Representation {
         id: heading
         leftPadding: full.plasmoidItem.inset
         rightPadding: full.plasmoidItem.inset
-        topPadding: Math.round(Kirigami.Units.smallSpacing * 0.75)
-        bottomPadding: Math.round(Kirigami.Units.smallSpacing * 0.75)
+        topPadding: Math.round(Kirigami.Units.smallSpacing * 0.9)
+        bottomPadding: Math.round(Kirigami.Units.smallSpacing * 0.8)
 
-        // No filled band: the heading's square-cornered background fought the
-        // popup's rounded frame at the top edge. A hairline does the same
-        // separating job and lets the pane read as one surface.
         background: Item {
             Rectangle {
                 anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
                 height: 1
-                color: full.plasmoidItem.line
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 0.08; color: full.plasmoidItem.line }
+                    GradientStop { position: 0.92; color: full.plasmoidItem.line }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
             }
         }
 
         contentItem: RowLayout {
             spacing: Kirigami.Units.smallSpacing
 
-            PlasmaComponents.Label {
-                // Eyebrow rather than a heading: the numbers below are the
-                // loudest thing in the popup, and the title should not compete.
-                text: i18n("AI Credits").toUpperCase()
-                color: full.plasmoidItem.inkSoft
-                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.95)
-                font.letterSpacing: 2.2
-                font.capitalization: Font.AllUppercase
+            RowLayout {
+                spacing: Math.round(Kirigami.Units.smallSpacing * 0.8)
+
+                Kirigami.Icon {
+                    source: "speedometer"
+                    implicitWidth: Kirigami.Units.iconSizes.small
+                    implicitHeight: implicitWidth
+                    color: Kirigami.Theme.highlightColor
+                }
+
+                PlasmaComponents.Label {
+                    text: i18n("AI Credits")
+                    color: full.plasmoidItem.ink
+                    font.weight: Font.Bold
+                    font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.05)
+                }
+            }
+
+            Rectangle {
+                readonly property int crit: full.plasmoidItem.criticalCount || 0
+                readonly property int warn: full.plasmoidItem.warningCount || 0
+                readonly property int attn: full.plasmoidItem.attentionCount || 0
+
+                visible: full.plasmoidItem.loaded && full.plasmoidItem.providers.length > 0
+                implicitHeight: Math.round(healthLabel.implicitHeight + 4)
+                implicitWidth: Math.round(healthLabel.implicitWidth + Kirigami.Units.smallSpacing * 1.6)
+                radius: full.plasmoidItem.badgeRadius
+
+                color: (crit > 0 || attn > 0)
+                       ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.16)
+                       : (warn > 0)
+                       ? Qt.rgba(Kirigami.Theme.neutralTextColor.r, Kirigami.Theme.neutralTextColor.g, Kirigami.Theme.neutralTextColor.b, 0.16)
+                       : Qt.rgba(Kirigami.Theme.positiveTextColor.r, Kirigami.Theme.positiveTextColor.g, Kirigami.Theme.positiveTextColor.b, 0.14)
+
+                border.width: 1
+                border.color: (crit > 0 || attn > 0)
+                              ? Qt.rgba(Kirigami.Theme.negativeTextColor.r, Kirigami.Theme.negativeTextColor.g, Kirigami.Theme.negativeTextColor.b, 0.35)
+                              : (warn > 0)
+                              ? Qt.rgba(Kirigami.Theme.neutralTextColor.r, Kirigami.Theme.neutralTextColor.g, Kirigami.Theme.neutralTextColor.b, 0.35)
+                              : Qt.rgba(Kirigami.Theme.positiveTextColor.r, Kirigami.Theme.positiveTextColor.g, Kirigami.Theme.positiveTextColor.b, 0.28)
+
+                PlasmaComponents.Label {
+                    id: healthLabel
+                    anchors.centerIn: parent
+                    text: {
+                        if (parent.crit > 0)
+                            return i18np("%1 critical", "%1 critical", parent.crit);
+                        if (parent.attn > 0)
+                            return i18np("%1 needs setup", "%1 need setup", parent.attn);
+                        if (parent.warn > 0)
+                            return i18np("%1 warning", "%1 warning", parent.warn);
+                        return i18n("all normal");
+                    }
+                    color: (parent.crit > 0 || parent.attn > 0)
+                           ? Kirigami.Theme.negativeTextColor
+                           : (parent.warn > 0)
+                           ? Kirigami.Theme.neutralTextColor
+                           : Kirigami.Theme.positiveTextColor
+                    font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82)
+                    font.weight: Font.DemiBold
+                    font.capitalization: Font.AllUppercase
+                }
             }
 
             Item { Layout.fillWidth: true }
@@ -64,9 +121,10 @@ PlasmaExtras.Representation {
             }
 
             PlasmaComponents.ToolButton {
+                id: refreshBtn
                 icon.name: "view-refresh"
                 flat: true
-                opacity: hovered ? 1 : 0.55
+                opacity: hovered ? 1 : 0.65
                 text: i18n("Refresh now")
                 display: PlasmaComponents.AbstractButton.IconOnly
                 PlasmaComponents.ToolTip.text: text
@@ -74,12 +132,20 @@ PlasmaExtras.Representation {
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 enabled: !full.plasmoidItem.refreshing
                 onClicked: full.plasmoidItem.refreshNow()
+
+                RotationAnimation on rotation {
+                    running: full.plasmoidItem.refreshing
+                    loops: Animation.Infinite
+                    from: 0
+                    to: 360
+                    duration: 900
+                }
             }
 
             PlasmaComponents.ToolButton {
                 icon.name: "configure"
                 flat: true
-                opacity: hovered ? 1 : 0.55
+                opacity: hovered ? 1 : 0.65
                 text: i18n("Configure AI Credits")
                 display: PlasmaComponents.AbstractButton.IconOnly
                 PlasmaComponents.ToolTip.text: text
@@ -91,38 +157,26 @@ PlasmaExtras.Representation {
     }
 
     PlasmaComponents.ScrollView {
-        // Anchored rather than assigned to contentItem: as contentItem, the
-        // delegate's width (derived from the view) feeds back into the
-        // Representation's implicit width and loops. The margins keep the list
-        // out from under the header and footer, which is the only thing
-        // contentItem was buying.
-        anchors {
-            fill: parent
-            topMargin: full.header ? full.header.height : 0
-            bottomMargin: (full.footer && full.footer.visible) ? full.footer.height : 0
-        }
+        anchors.fill: parent
 
-        // Without pinning the horizontal bar off, the view's implicit width
-        // feeds back into the popup's — QTBUG-83890, same workaround the
-        // stock Plasma widgets use.
         PlasmaComponents.ScrollBar.horizontal.policy: PlasmaComponents.ScrollBar.AlwaysOff
         contentWidth: availableWidth
 
         contentItem: ListView {
             id: list
             model: full.plasmoidItem.providers
-            spacing: Kirigami.Units.largeSpacing
+            spacing: Math.round(Kirigami.Units.smallSpacing * 1.5)
             clip: true
             reuseItems: true
-            topMargin: Math.round(Kirigami.Units.largeSpacing * 1.25)
-            bottomMargin: Kirigami.Units.largeSpacing
+            topMargin: Math.round(Kirigami.Units.smallSpacing * 1.25)
+            bottomMargin: Math.round(Kirigami.Units.smallSpacing * 1.25)
 
             delegate: ProviderRow {
                 required property var modelData
                 required property int index
                 provider: modelData
                 owner: full.plasmoidItem
-                showSeparator: index > 0
+                showSeparator: false
                 width: ListView.view.width
                 visible: !Plasmoid.configuration.hideUnconfigured
                          || modelData.status !== "auth_needed"
@@ -147,14 +201,20 @@ PlasmaExtras.Representation {
         position: PlasmaExtras.PlasmoidHeading.Position.Footer
         leftPadding: full.plasmoidItem.inset
         rightPadding: full.plasmoidItem.inset
-        topPadding: Math.round(Kirigami.Units.smallSpacing * 1.25)
-        bottomPadding: Math.round(Kirigami.Units.smallSpacing * 1.25)
+        topPadding: Math.round(Kirigami.Units.smallSpacing * 0.8)
+        bottomPadding: Math.round(Kirigami.Units.smallSpacing * 0.9)
 
         background: Item {
             Rectangle {
                 anchors { left: parent.left; right: parent.right; top: parent.top }
                 height: 1
-                color: full.plasmoidItem.line
+                gradient: Gradient {
+                    orientation: Gradient.Horizontal
+                    GradientStop { position: 0.0; color: "transparent" }
+                    GradientStop { position: 0.08; color: full.plasmoidItem.line }
+                    GradientStop { position: 0.92; color: full.plasmoidItem.line }
+                    GradientStop { position: 1.0; color: "transparent" }
+                }
             }
         }
         visible: full.plasmoidItem.totals
@@ -163,57 +223,143 @@ PlasmaExtras.Representation {
         contentItem: RowLayout {
             spacing: Kirigami.Units.smallSpacing
 
-            ColumnLayout {
-                spacing: 0
+            Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredWidth: 1
-
-                PlasmaComponents.Label {
-                    text: i18n("Next renewal").toUpperCase()
-                    color: full.plasmoidItem.inkSoft
-                    font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.9)
-                    font.letterSpacing: 1.1
-                    font.capitalization: Font.AllUppercase
-                }
-                PlasmaComponents.Label {
-                    text: {
-                        const totals = full.plasmoidItem.totals || ({});
-                        const next = totals.next_renewal;
-                        if (next)
-                            return i18n("%1 · %2", next.label,
-                                        full.plasmoidItem.displayDate(next.date));
-                        const count = totals.subscriptions_total || 0;
-                        return count ? i18n("Add dates for %1 subscriptions", count)
-                                     : i18n("None configured");
+                implicitHeight: renewalContent.implicitHeight + Math.round(Kirigami.Units.smallSpacing * 1.2)
+                radius: full.plasmoidItem.badgeRadius
+                gradient: Gradient {
+                    GradientStop {
+                        position: 0.0
+                        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.055)
                     }
-                    color: full.plasmoidItem.ink
-                    font: Kirigami.Theme.smallFont
-                    elide: Text.ElideRight
-                    Layout.fillWidth: true
+                    GradientStop {
+                        position: 1.0
+                        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.025)
+                    }
+                }
+                border.width: 1
+                border.color: full.plasmoidItem.cardBorder
+
+                Rectangle {
+                    anchors { left: parent.left; right: parent.right; top: parent.top }
+                    height: 1
+                    radius: parent.radius
+                    color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.07)
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: Plasmoid.internalAction("configure").trigger()
+
+                    RowLayout {
+                        id: renewalContent
+                        anchors {
+                            left: parent.left
+                            right: parent.right
+                            verticalCenter: parent.verticalCenter
+                            leftMargin: Kirigami.Units.smallSpacing
+                            rightMargin: Kirigami.Units.smallSpacing
+                        }
+                        spacing: Kirigami.Units.smallSpacing
+
+                        Kirigami.Icon {
+                            source: "view-calendar"
+                            implicitWidth: Kirigami.Units.iconSizes.small
+                            implicitHeight: implicitWidth
+                            color: Kirigami.Theme.highlightColor
+                        }
+
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 0
+
+                            PlasmaComponents.Label {
+                                text: i18n("Next renewal").toUpperCase()
+                                color: full.plasmoidItem.inkSoft
+                                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.78)
+                                font.letterSpacing: 0.8
+                                font.capitalization: Font.AllUppercase
+                            }
+                            PlasmaComponents.Label {
+                                text: {
+                                    const totals = full.plasmoidItem.totals || ({});
+                                    const next = totals.next_renewal;
+                                    if (next)
+                                        return i18n("%1 · %2", next.label,
+                                                    full.plasmoidItem.displayDate(next.date));
+                                    const count = totals.subscriptions_total || 0;
+                                    return count ? i18n("Add dates for %1 subscriptions", count)
+                                                 : i18n("None configured");
+                                }
+                                color: full.plasmoidItem.ink
+                                font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.95)
+                                font.weight: Font.Medium
+                                elide: Text.ElideRight
+                                Layout.fillWidth: true
+                            }
+                        }
+                    }
                 }
             }
 
-            ColumnLayout {
-                spacing: 0
-                Layout.alignment: Qt.AlignRight
-
-                PlasmaComponents.Label {
-                    text: i18n("Per month").toUpperCase()
-                    color: full.plasmoidItem.inkSoft
-                    font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.9)
-                    font.letterSpacing: 1.1
-                    font.capitalization: Font.AllUppercase
-                    Layout.alignment: Qt.AlignRight
-                }
-                PlasmaComponents.Label {
-                    text: {
-                        const totals = full.plasmoidItem.totals || ({});
-                        return "$" + (totals.monthly_usd || 0).toFixed(2);
+            Rectangle {
+                Layout.preferredWidth: Math.round(Kirigami.Units.gridUnit * 7.5)
+                implicitHeight: spendContent.implicitHeight + Math.round(Kirigami.Units.smallSpacing * 1.2)
+                radius: full.plasmoidItem.badgeRadius
+                gradient: Gradient {
+                    GradientStop {
+                        position: 0.0
+                        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.055)
                     }
-                    color: full.plasmoidItem.ink
-                    font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.1)
-                    font.weight: Font.DemiBold
-                    Layout.alignment: Qt.AlignRight
+                    GradientStop {
+                        position: 1.0
+                        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.025)
+                    }
+                }
+                border.width: 1
+                border.color: full.plasmoidItem.cardBorder
+
+                Rectangle {
+                    anchors { left: parent.left; right: parent.right; top: parent.top }
+                    height: 1
+                    radius: parent.radius
+                    color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.07)
+                }
+
+                RowLayout {
+                    id: spendContent
+                    anchors {
+                        fill: parent
+                        leftMargin: Kirigami.Units.smallSpacing
+                        rightMargin: Kirigami.Units.smallSpacing
+                    }
+                    spacing: Kirigami.Units.smallSpacing
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 0
+
+                        PlasmaComponents.Label {
+                            text: i18n("Per month").toUpperCase()
+                            color: full.plasmoidItem.inkSoft
+                            font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.78)
+                            font.letterSpacing: 0.8
+                            font.capitalization: Font.AllUppercase
+                            Layout.alignment: Qt.AlignRight
+                        }
+                        PlasmaComponents.Label {
+                            text: {
+                                const totals = full.plasmoidItem.totals || ({});
+                                return "$" + (totals.monthly_usd || 0).toFixed(2);
+                            }
+                            color: full.plasmoidItem.ink
+                            font.pixelSize: Math.round(Kirigami.Theme.defaultFont.pixelSize * 1.15)
+                            font.weight: Font.Bold
+                            Layout.alignment: Qt.AlignRight
+                        }
+                    }
                 }
             }
         }

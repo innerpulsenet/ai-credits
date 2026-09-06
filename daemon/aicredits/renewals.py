@@ -33,6 +33,10 @@ def next_occurrence(anchor: str, cadence: str, today: dt.date | None = None) -> 
     except (TypeError, ValueError):
         return None
     cadence = (cadence or "monthly").lower()
+    if cadence == "daily":
+        while day < today:
+            day += dt.timedelta(days=1)
+        return day
     if cadence == "weekly":
         while day < today:
             day += dt.timedelta(days=7)
@@ -51,6 +55,8 @@ def next_occurrence(anchor: str, cadence: str, today: dt.date | None = None) -> 
 
 def monthly_equivalent(cost: float, cadence: str) -> float:
     cadence = (cadence or "monthly").lower()
+    if cadence == "daily":
+        return cost * 365 / 12
     if cadence == "weekly":
         return cost * 52 / 12
     return cost / CADENCE_MONTHS.get(cadence, 1)

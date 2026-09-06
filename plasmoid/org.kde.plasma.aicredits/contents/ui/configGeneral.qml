@@ -192,6 +192,90 @@ QQC2.ScrollView {
                     }
                 }
 
+                // Visual Threshold Spectrum Bar
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    spacing: 4
+
+                    QQC2.Label {
+                        text: i18n("THRESHOLD COLOR SPECTRUM")
+                        font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.82)
+                        font.letterSpacing: 0.8
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 12
+                        radius: 6
+                        clip: true
+                        color: Qt.rgba(Kirigami.Theme.textColor.r, Kirigami.Theme.textColor.g, Kirigami.Theme.textColor.b, 0.1)
+
+                        Row {
+                            anchors.fill: parent
+
+                            // Green / Normal Zone
+                            Rectangle {
+                                width: Math.max(0, parent.width * (Math.min(warnPct.value, criticalPct.value) / 100))
+                                height: parent.height
+                                color: Kirigami.Theme.positiveTextColor
+                            }
+
+                            // Amber / Warning Zone
+                            Rectangle {
+                                width: Math.max(0, parent.width * (Math.max(0, criticalPct.value - warnPct.value) / 100))
+                                height: parent.height
+                                color: Kirigami.Theme.neutralTextColor
+                            }
+
+                            // Red / Critical Zone
+                            Rectangle {
+                                width: Math.max(0, parent.width * (Math.max(0, 100 - criticalPct.value) / 100))
+                                height: parent.height
+                                color: Kirigami.Theme.negativeTextColor
+                            }
+                        }
+                    }
+
+                    RowLayout {
+                        Layout.fillWidth: true
+
+                        RowLayout {
+                            spacing: 4
+                            Rectangle { width: 8; height: 8; radius: 4; color: Kirigami.Theme.positiveTextColor }
+                            QQC2.Label {
+                                text: i18n("Normal: 0–%1%", warnPct.value)
+                                font: Kirigami.Theme.smallFont
+                                color: Kirigami.Theme.disabledTextColor
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        RowLayout {
+                            spacing: 4
+                            Rectangle { width: 8; height: 8; radius: 4; color: Kirigami.Theme.neutralTextColor }
+                            QQC2.Label {
+                                text: i18n("Amber: %1–%2%", warnPct.value, criticalPct.value)
+                                font: Kirigami.Theme.smallFont
+                                color: Kirigami.Theme.disabledTextColor
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        RowLayout {
+                            spacing: 4
+                            Rectangle { width: 8; height: 8; radius: 4; color: Kirigami.Theme.negativeTextColor }
+                            QQC2.Label {
+                                text: i18n("Red: %1–100%", criticalPct.value)
+                                font: Kirigami.Theme.smallFont
+                                color: Kirigami.Theme.disabledTextColor
+                            }
+                        }
+                    }
+                }
+
                 Kirigami.FormLayout {
                     Layout.fillWidth: true
                     QQC2.SpinBox {
@@ -205,15 +289,15 @@ QQC2.ScrollView {
                     }
                     QQC2.SpinBox {
                         id: warnPct
-                        Kirigami.FormData.label: i18n("Amber above:")
+                        Kirigami.FormData.label: i18n("Amber threshold:")
                         from: 1
-                        to: 100
+                        to: 99
                         textFromValue: value => value + "%"
                     }
                     QQC2.SpinBox {
                         id: criticalPct
-                        Kirigami.FormData.label: i18n("Red above:")
-                        from: 1
+                        Kirigami.FormData.label: i18n("Red threshold:")
+                        from: 2
                         to: 100
                         textFromValue: value => value + "%"
                     }

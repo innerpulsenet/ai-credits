@@ -133,12 +133,20 @@ class TestTrend(unittest.TestCase):
         out = trend.project(self.POINTS, 40.0, 7200, resets_at=7200 + 100_000)
         self.assertEqual(out["exhausts_at"], 21600)
 
-    def test_stays_quiet_when_the_window_resets_first(self):
-        self.assertIsNone(trend.project(self.POINTS, 40.0, 7200, resets_at=7200 + 3600))
+    def test_projects_pace_when_window_resets_first(self):
+        out = trend.project(self.POINTS, 40.0, 7200, resets_at=7200 + 3600)
+        self.assertEqual(out["projected_pct"], 55)
+        self.assertEqual(out["exhausts_at"], 21600)
 
     def test_flat_usage_has_no_projection(self):
         flat = [(0, 50.0), (3600, 50.0), (7200, 50.0)]
         self.assertIsNone(trend.project(flat, 50.0, 7200, None))
+
+    def test_cycle_reset_drop_is_handled(self):
+        points_with_reset = [(0, 80.0), (1000, 95.0), (2000, 5.0), (3000, 20.0)]
+        out = trend.project(points_with_reset, 20.0, 3000, resets_at=3000 + 10_000)
+        self.assertIsNotNone(out)
+        self.assertIn("exhausts_at", out)
 
 
 class TestRenewals(unittest.TestCase):
