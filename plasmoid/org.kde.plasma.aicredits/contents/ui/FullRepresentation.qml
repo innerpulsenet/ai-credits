@@ -74,36 +74,6 @@ PlasmaExtras.Representation {
 
             Item { Layout.fillWidth: true }
 
-            // The age of the oldest reading on screen — the only figure that can
-            // honestly stand for "how current is this panel". Providers poll on
-            // their own intervals, so the spread lives in the tooltip.
-            PlasmaComponents.Label {
-                id: freshness
-                text: full.plasmoidItem.loaded
-                      ? full.plasmoidItem.relativeTime(full.plasmoidItem.oldestFetchedAt
-                                                       || full.plasmoidItem.updatedAt) : ""
-                color: full.plasmoidItem.inkSoft
-                font: Kirigami.Theme.smallFont
-
-                HoverHandler { id: freshnessHover }
-                PlasmaComponents.ToolTip.visible: freshnessHover.hovered && freshness.text !== ""
-                PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
-                PlasmaComponents.ToolTip.text: {
-                    const item = full.plasmoidItem;
-                    const lines = [];
-                    if (item.oldestFetchedAt)
-                        lines.push(i18n("Oldest reading: %1 (%2)",
-                                        item.relativeTime(item.oldestFetchedAt),
-                                        item.oldestProviderLabel));
-                    if (item.newestFetchedAt)
-                        lines.push(i18n("Newest reading: %1",
-                                        item.relativeTime(item.newestFetchedAt)));
-                    lines.push(i18n("Snapshot rebuilt: %1",
-                                    item.relativeTime(item.updatedAt)));
-                    return lines.join("\n");
-                }
-            }
-
             PlasmaComponents.ToolButton {
                 id: refreshBtn
                 icon.name: "view-refresh"
@@ -111,7 +81,18 @@ PlasmaExtras.Representation {
                 opacity: hovered ? 1 : 0.65
                 text: i18n("Refresh now")
                 display: PlasmaComponents.AbstractButton.IconOnly
-                PlasmaComponents.ToolTip.text: text
+                PlasmaComponents.ToolTip.text: {
+                    const item = full.plasmoidItem;
+                    const lines = [i18n("Refresh now")];
+                    if (item.newestFetchedAt)
+                        lines.push(i18n("Newest reading %1", item.relativeTime(item.newestFetchedAt)));
+                    if (item.oldestFetchedAt && item.oldestFetchedAt !== item.newestFetchedAt)
+                        lines.push(i18n("Oldest %1 (%2)", item.relativeTime(item.oldestFetchedAt),
+                                        item.oldestProviderLabel));
+                    if (item.updatedAt)
+                        lines.push(i18n("Snapshot rebuilt %1", item.relativeTime(item.updatedAt)));
+                    return lines.join("\n");
+                }
                 PlasmaComponents.ToolTip.visible: hovered
                 PlasmaComponents.ToolTip.delay: Kirigami.Units.toolTipDelay
                 enabled: !full.plasmoidItem.refreshing

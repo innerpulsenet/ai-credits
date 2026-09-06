@@ -110,6 +110,14 @@ Item {
                     }
 
                     Item { Layout.fillWidth: true }
+
+                    PlasmaComponents.Label {
+                        visible: !!row.provider.fetched_at
+                        text: row.owner.relativeTime(row.provider.fetched_at)
+                        color: row.owner.inkSoft
+                        font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.90)
+                        Layout.alignment: Qt.AlignVCenter
+                    }
                 }
 
                 PlasmaComponents.ToolButton {
