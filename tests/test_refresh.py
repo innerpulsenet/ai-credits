@@ -18,6 +18,7 @@ class RecoveryTests(unittest.TestCase):
     def test_expired_claude_login_is_refreshed(self):
         with patch.object(anthropic.secrets, 'get', return_value=None), \
              patch.object(anthropic, '_local_oauth_token', return_value=None), \
+             patch.object(anthropic, '_credentials_hollow', return_value=False), \
              patch.object(anthropic, '_refresh_local_login', return_value='renewed') as refresh, \
              patch.object(anthropic, '_oauth_usage', return_value={'five_hour': {'utilization': 42}}) as usage:
             reading = anthropic.Claude().poll({})
@@ -38,6 +39,7 @@ class RecoveryTests(unittest.TestCase):
         with patch.object(anthropic.secrets, 'get', return_value='valid'), \
              patch.object(anthropic, '_refresh_local_login') as refresh, \
              patch.object(anthropic, '_oauth_usage', side_effect=urllib.error.URLError('offline')), \
+             patch.object(anthropic, '_desktop_usage', return_value=([], None)), \
              patch.object(anthropic, '_cached_usage', return_value=([Meter(WINDOW, '5h', 42)], 100)):
             self.assertEqual(anthropic.Claude().poll({}).fetched_at, 100)
         refresh.assert_not_called()
@@ -50,6 +52,60 @@ class RecoveryTests(unittest.TestCase):
         self.assertIn('--safe-mode', run.call_args.args[0])
         self.assertLessEqual(run.call_args.kwargs['timeout'], 30)
 
+
+class ClaudeFallbackTests(unittest.TestCase):
+    def test_desktop_history_maps_five_hour_and_seven_day(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'plan-usage-history.json'
+            path.write_text(json.dumps({
+                'version': 2,
+                'samples': [
+                    {'t': 1000, 'u': {'fh': 1, 'sd': 2}},
+                    {'t': 1788730983835, 'u': {'fh': 31, 'sd': 13}},
+                ],
+            }))
+            meters, fetched = anthropic._desktop_usage(path)
+        self.assertEqual([(m.label, m.used_pct) for m in meters],
+                         [('5h', 31.0), ('7d', 13.0)])
+        self.assertEqual(fetched, 1788730983)
+
+    def test_expired_claude_code_cache_is_ignored(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'config.json'
+            path.write_text(json.dumps({
+                'cachedUsageUtilization': {
+                    'fetchedAtMs': 1000,
+                    'utilization': {
+                        'five_hour': {'utilization': 14, 'resets_at': '2020-01-01T00:00:00Z'},
+                        'seven_day': {'utilization': 63, 'resets_at': '2020-01-02T00:00:00Z'},
+                    },
+                },
+            }))
+            meters, fetched = anthropic._cached_usage(path)
+        self.assertEqual(meters, [])
+        self.assertIsNone(fetched)
+
+    def test_poll_uses_desktop_history_when_oauth_file_is_hollow(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            history = Path(root) / 'plan-usage-history.json'
+            history.write_text(json.dumps({
+                'samples': [{'t': 1788730983000, 'u': {'fh': 31, 'sd': 13}}],
+            }))
+            with patch.object(anthropic.secrets, 'get', return_value=None), \
+                 patch.object(anthropic, '_local_oauth_token', return_value=None), \
+                 patch.object(anthropic, '_refresh_local_login', return_value=None), \
+                 patch.object(anthropic, '_cached_usage', return_value=([], None)):
+                reading = anthropic.Claude().poll({'desktop_history': str(history)})
+        self.assertEqual(reading.status, 'ok')
+        self.assertEqual(reading.source, 'local-log')
+        self.assertEqual([(m.label, m.used_pct) for m in reading.meters],
+                         [('5h', 31.0), ('7d', 13.0)])
+
+
+class RecoveryStoreTests(unittest.TestCase):
     def setUp(self):
         self.conn = sqlite3.connect(':memory:')
         self.conn.row_factory = sqlite3.Row
@@ -78,6 +134,17 @@ class RecoveryTests(unittest.TestCase):
         entry = _from_cache(self.conn, 'claude', {}, None, 1110, {})
         self.assertEqual(entry['status'], 'stale')
         self.assertEqual(entry['message'], 'offline')
+
+    def test_older_fallback_does_not_clobber_newer_last_good(self):
+        store.record(self.conn, Reading('claude', 'Claude', fetched_at=2000,
+                     meters=[Meter(WINDOW, '5h', 10)]), 2000)
+        store.record(self.conn, Reading('claude', 'Claude', fetched_at=1000, status='stale',
+                     message='last usage reported by Claude Code',
+                     meters=[Meter(WINDOW, '5h', 90)]), 3000)
+        last_good = json.loads(self.conn.execute(
+            "SELECT last_good FROM polls WHERE provider='claude'").fetchone()[0])
+        self.assertEqual(last_good['fetched_at'], 2000)
+        self.assertEqual(last_good['meters'][0]['used_pct'], 10)
 
 
 class WindowSparkTests(unittest.TestCase):

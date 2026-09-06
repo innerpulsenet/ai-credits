@@ -8,7 +8,14 @@ Two paths, in order of preference:
    `~/.claude/.credentials.json`. A token explicitly stored with
    `aicredits auth set claude` still takes precedence.
 
-2. Otherwise, local transcript accounting: sum the `usage` blocks Claude Code
+2. Claude Desktop's `plan-usage-history.json` (5h/7d percents). Claude Code
+   2.1.x can empty `.credentials.json` after a failed keyring write while
+   Desktop keeps sampling.
+
+3. Claude Code's last `cachedUsageUtilization`, but only while those windows
+   have not reset — expired cache used to overwrite a better last-good.
+
+4. Otherwise, local transcript accounting: sum the `usage` blocks Claude Code
    writes to ~/.claude/projects/**/*.jsonl and price them at published API
    rates. That measures consumption, not remaining quota — an honest proxy, and
    labelled as an estimate.
@@ -38,6 +45,7 @@ PROJECTS = Path.home() / ".claude" / "projects"
 CACHE = cfg.DATA_DIR / "claude_scan.json"
 CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
 CLAUDE_CONFIG = Path.home() / ".claude.json"
+DESKTOP_HISTORY = Path.home() / ".config" / "Claude" / "plan-usage-history.json"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 
 # USD per million tokens (input, output). Prefix match, longest first, so dated
@@ -194,6 +202,15 @@ def _oauth_usage(token: str, timeout: int = 15) -> dict[str, Any]:
         return json.loads(response.read().decode())
 
 
+def _credentials_hollow(path: Path = CREDENTIALS) -> bool:
+    """True when Claude Code left an OAuth stub with no usable tokens."""
+    try:
+        oauth = json.loads(path.read_text()).get("claudeAiOauth") or {}
+        return not oauth.get("accessToken") and not oauth.get("refreshToken")
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+        return False
+
+
 def _local_oauth_token(path: Path = CREDENTIALS) -> str | None:
     """Read Claude Code's access token without ever copying it into our config."""
     try:
@@ -310,14 +327,43 @@ def _meters_from_oauth(payload: dict[str, Any], show_extra: bool = True) -> list
     return meters
 
 
-def _cached_usage(path: Path = CLAUDE_CONFIG, show_extra: bool = True) -> tuple[list[Meter], int | None]:
-    """Use Claude Code's last successful usage fetch when the API is offline."""
+def _cached_usage(path: Path = CLAUDE_CONFIG, show_extra: bool = True,
+                  now: int | None = None) -> tuple[list[Meter], int | None]:
+    """Use Claude Code's last successful usage fetch when the API is offline.
+
+    Expired windows are discarded. Returning them as a successful reading
+    lets the poll overwrite last-good with pre-reset percentages.
+    """
     try:
         cached = json.loads(path.read_text()).get("cachedUsageUtilization") or {}
         fetched_ms = int(cached.get("fetchedAtMs") or 0)
         meters = _meters_from_oauth(cached.get("utilization") or {}, show_extra=show_extra)
-        return meters, (fetched_ms // 1000 if fetched_ms else None)
+        epoch = int(time.time() if now is None else now)
+        live = [m for m in meters if not m.resets_at or m.resets_at > epoch]
+        if not live:
+            return [], None
+        return live, (fetched_ms // 1000 if fetched_ms else None)
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return [], None
+
+
+def _desktop_usage(path: Path = DESKTOP_HISTORY) -> tuple[list[Meter], int | None]:
+    """Claude Desktop writes rolling 5h/7d percents even when CLI OAuth is empty."""
+    try:
+        samples = json.loads(path.read_text()).get("samples") or []
+        if not samples:
+            return [], None
+        sample = samples[-1]
+        usage = sample.get("u") or {}
+        ts = sample.get("t")
+        fetched = int(ts) // 1000 if ts else None
+        meters: list[Meter] = []
+        if usage.get("fh") is not None:
+            meters.append(Meter(kind=WINDOW, label="5h", used_pct=float(usage["fh"])))
+        if usage.get("sd") is not None:
+            meters.append(Meter(kind=WINDOW, label="7d", used_pct=float(usage["sd"])))
+        return meters, fetched
+    except (OSError, json.JSONDecodeError, TypeError, ValueError, AttributeError):
         return [], None
 
 
@@ -332,7 +378,7 @@ class Claude(Provider):
         show_extra = bool(settings.get("show_extra", True))
         supplied = secrets.get("claude")
         token = supplied or _local_oauth_token()
-        if not token:
+        if not token and not _credentials_hollow():
             token = _refresh_local_login(settings)
         if token:
             try:
@@ -359,6 +405,12 @@ class Claude(Provider):
                             pass
             except (urllib.error.URLError, ValueError, TimeoutError):
                 pass
+        desktop = Path(settings.get("desktop_history") or DESKTOP_HISTORY).expanduser()
+        meters, fetched_at = _desktop_usage(desktop)
+        if meters:
+            return Reading(id=self.id, label=label, status=OK, source="local-log",
+                           fetched_at=fetched_at, meters=meters, url=settings.get("url"),
+                           plan=_local_plan(), message="last usage reported by Claude Desktop")
         meters, fetched_at = _cached_usage(show_extra=show_extra)
         if meters:
             return Reading(id=self.id, label=label, status=OK, source="local-log",

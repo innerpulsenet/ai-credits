@@ -69,8 +69,19 @@ def record(conn: sqlite3.Connection, reading, now: int) -> None:
     OK and STALE both carry real figures and are worth caching for display;
     only OK counts as a successful fetch and only OK is written to history,
     so an aged reading re-read on every poll cannot flatten the trend line.
+    A later poll whose payload is older than the cached last-good must not
+    replace it — that is how an expired Claude Code cache was wiping a
+    newer live reading.
     """
     if reading.status in (OK, STALE):
+        keep_last_good = False
+        if reading.fetched_at:
+            row = conn.execute(
+                "SELECT last_good FROM polls WHERE provider=?", (reading.id,)).fetchone()
+            if row and row["last_good"]:
+                prev_at = json.loads(row["last_good"]).get("fetched_at") or 0
+                if prev_at and reading.fetched_at < prev_at:
+                    keep_last_good = True
         for meter in (reading.meters if reading.status == OK else ()):
             conn.execute(
                 "INSERT INTO readings (ts, provider, meter, used_pct, remaining, total, amount_usd)"
@@ -78,15 +89,23 @@ def record(conn: sqlite3.Connection, reading, now: int) -> None:
                 (now, reading.id, meter.label, meter.pct(), meter.remaining,
                  meter.total, meter.amount_usd),
             )
-        conn.execute(
-            "INSERT INTO polls (provider, last_poll, last_ok, status, message, last_good)"
-            " VALUES (?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET"
-            " last_poll=excluded.last_poll, last_ok=COALESCE(excluded.last_ok, polls.last_ok),"
-            " status=excluded.status, message=excluded.message,"
-            " last_good=excluded.last_good",
-            (reading.id, now, now if reading.status == OK else None, reading.status,
-             reading.message, json.dumps(reading.to_json(now))),
-        )
+        if keep_last_good:
+            conn.execute(
+                "UPDATE polls SET last_poll=?, last_ok=COALESCE(?, last_ok),"
+                " status=?, message=? WHERE provider=?",
+                (now, now if reading.status == OK else None, reading.status,
+                 reading.message, reading.id),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO polls (provider, last_poll, last_ok, status, message, last_good)"
+                " VALUES (?,?,?,?,?,?) ON CONFLICT(provider) DO UPDATE SET"
+                " last_poll=excluded.last_poll, last_ok=COALESCE(excluded.last_ok, polls.last_ok),"
+                " status=excluded.status, message=excluded.message,"
+                " last_good=excluded.last_good",
+                (reading.id, now, now if reading.status == OK else None, reading.status,
+                 reading.message, json.dumps(reading.to_json(now))),
+            )
     else:
         conn.execute(
             "INSERT INTO polls (provider, last_poll, last_ok, status, message, last_good)"
