@@ -81,15 +81,15 @@ def _as_epoch(value: Any) -> int | None:
     return None
 
 
-def _to_percent(value: Any) -> float | None:
-    """The CLI reports a ratio; a value above 1 is already a percentage."""
+def _to_percent(value: Any, *, ratio: bool = False) -> float | None:
+    """Units follow the response field, never the magnitude of its value."""
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
     if number < 0:
         return None
-    return round(number * 100 if number <= 1 else number, 2)
+    return round(number * 100 if ratio else number, 2)
 
 
 def cli_meters(payload: Any) -> tuple[list[Meter], str | None]:
@@ -105,7 +105,7 @@ def cli_meters(payload: Any) -> tuple[list[Meter], str | None]:
             if not match or match.group(3) != "Percentage":
                 continue
             count, period = int(match.group(1)), match.group(2)
-            pct = _to_percent(value)
+            pct = _to_percent(value, ratio=True)
             if pct is None:
                 continue
             label = (window_label(count * _PERIOD_MINUTES[period])

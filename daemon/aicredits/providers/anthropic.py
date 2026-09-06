@@ -263,7 +263,7 @@ def _meters_from_oauth(payload: dict[str, Any]) -> list[Meter]:
         meters.append(Meter(
             kind=WINDOW,
             label=label,
-            used_pct=pct * (100.0 if pct <= 1.0 else 1.0),
+            used_pct=pct,  # utilization is already a percentage, including 0–1%.
             resets_at=iso_to_epoch(item.get("resets_at")),
         ))
     if meters:
@@ -275,14 +275,15 @@ def _meters_from_oauth(payload: dict[str, Any]) -> list[Meter]:
     for item in candidates:
         if not isinstance(item, dict):
             continue
-        pct = item.get("utilization") or item.get("used_percent") or item.get("percent_used")
+        pct = next((item[k] for k in ("utilization", "used_percent", "percent_used")
+                    if item.get(k) is not None), None)
         if pct is None:
             continue
         resets = item.get("resets_at") or item.get("reset_at")
         meters.append(Meter(
             kind=WINDOW,
             label=str(item.get("name") or window_label(item.get("window_minutes"))),
-            used_pct=float(pct) * (100.0 if float(pct) <= 1.0 else 1.0),
+            used_pct=float(pct),
             resets_at=iso_to_epoch(resets) if isinstance(resets, str) else resets,
         ))
     return meters

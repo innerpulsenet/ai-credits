@@ -216,7 +216,7 @@ def quota_meters(payload: Any, now: int | None = None) -> tuple[list[Meter], str
             pct = round(100.0 * used / total, 1)
         else:
             raw = _num(node.get("percentage"))
-            pct = None if raw is None else round(raw * 100 if 0 < raw <= 1 else raw, 1)
+            pct = None if raw is None else round(raw, 1)
         if pct is None:
             continue
         if kind == "TIME_LIMIT":

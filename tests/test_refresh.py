@@ -125,3 +125,43 @@ class NousPlanTests(unittest.TestCase):
         self.assertIsNone(_plan({'subscription': {'tier': 2},
                                 'purchasingPower': {'tierName': 'New'}}))
         self.assertIsNone(_plan({'plan': {'id': 'internal'}}))
+
+
+class ClaudePercentageTests(unittest.TestCase):
+    def test_small_percentages_are_not_treated_as_ratios(self):
+        for value in (0, 0.48, 1, 2, 100):
+            with self.subTest(value=value):
+                for payload in ({'seven_day': {'utilization': value}},
+                                {'usage': [{'utilization': value}]}):
+                    meters = anthropic._meters_from_oauth(payload)
+                    self.assertEqual(meters[0].used_pct, value)
+
+    def test_post_reset_pace_uses_small_percentages(self):
+        from aicredits.trend import project
+        values = [anthropic._meters_from_oauth({'seven_day': {'utilization': v}})[0].used_pct
+                  for v in (0, 1, 2)]
+        projection = project(list(zip((0, 3600, 7200), values)), 2, 7200, 86400)
+        self.assertEqual(projection['projected_pct'], 24)
+
+
+class ProviderPercentageUnitsTests(unittest.TestCase):
+    def test_small_explicit_percentages_stay_percentages(self):
+        from aicredits.providers.alibaba import cli_meters
+        from aicredits.providers.zai import quota_meters
+        from aicredits.providers.codex import _reading_from_limits
+        from aicredits.providers.antigravity import parse_usage
+        for value in (0, 0.5, 1, 2, 100):
+            with self.subTest(value=value):
+                self.assertEqual(cli_meters({'usedPercent': value})[0][0].used_pct, value)
+                self.assertEqual(quota_meters({'limits': [{'type': 'CREDIT_LIMIT',
+                                                          'percentage': value}]})[0][0].used_pct, value)
+                codex = _reading_from_limits({'primary': {'used_percent': value}},
+                                            'Codex', None, 1, 'http')
+                self.assertEqual(codex.meters[0].used_pct, value)
+                self.assertEqual(parse_usage(f'Gemini Models\tWeekly Limit Remaining\t{value}%')[0].used_pct,
+                                 100 - value)
+
+    def test_alibaba_ratio_field_has_fixed_units(self):
+        from aicredits.providers.alibaba import cli_meters
+        for value, expected in ((0, 0), (0.005, 0.5), (0.01, 1), (1, 100), (1.2, 120)):
+            self.assertEqual(cli_meters({'per1WeekPercentage': value})[0][0].used_pct, expected)

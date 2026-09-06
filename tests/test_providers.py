@@ -198,7 +198,7 @@ class TestClaudeAccounting(unittest.TestCase):
         }
         meters = _meters_from_oauth(payload)
         self.assertEqual([m.label for m in meters], ["5h", "7d"])
-        self.assertEqual([m.used_pct for m in meters], [95.0, 48.0])
+        self.assertEqual([m.used_pct for m in meters], [95.0, 0.48])
         self.assertIsNotNone(meters[0].resets_at)
 
     def test_reads_unexpired_local_claude_code_token(self):
@@ -265,8 +265,9 @@ class TestAlibabaCli(unittest.TestCase):
         from aicredits.providers.alibaba import cli_meters
         # A full window reads as 100%, not 1%.
         self.assertEqual(cli_meters({"per1WeekPercentage": 1.0})[0][0].used_pct, 100.0)
-        # A value above 1 is already a percentage and is left alone.
-        self.assertEqual(cli_meters({"per1WeekPercentage": 42.5})[0][0].used_pct, 42.5)
+        # Ratios remain ratios even above the allowance; explicit percent fields stay percentages.
+        self.assertEqual(cli_meters({"per1WeekPercentage": 1.2})[0][0].used_pct, 120.0)
+        self.assertEqual(cli_meters({"usedPercent": 42.5})[0][0].used_pct, 42.5)
 
     def test_other_windows_are_labelled_from_the_field_name(self):
         from aicredits.providers.alibaba import cli_meters
