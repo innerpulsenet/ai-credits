@@ -20,18 +20,7 @@ Canvas {
         (colorRamp && points && points.length) ? colorRamp(points[points.length - 1])
                                                : strokeColor
 
-    // A flat series says nothing; drawing it puts a meaningless dash under
-    // every figure, so it only appears once there is movement to show.
-    readonly property bool hasVariation: {
-        if (!points || points.length < 2)
-            return false;
-        for (let i = 1; i < points.length; ++i)
-            if (points[i] !== points[0])
-                return true;
-        return false;
-    }
-
-    visible: hasVariation
+    visible: !!(points && points.length >= 2)
     opacity: 0.9
     onWidthChanged: requestPaint()
     onHeightChanged: requestPaint()
@@ -50,10 +39,13 @@ Canvas {
             low = Math.min(low, value);
             high = Math.max(high, value);
         }
-        const span = Math.max(1, high - low);
+        const span = high - low;
         const step = width / (points.length - 1);
         const padding = 2;
         const availableHeight = height - padding * 2;
+        const yAt = value => span === 0
+            ? height / 2
+            : height - padding - ((value - low) / span) * availableHeight;
 
         // 1. Build line path
         ctx.beginPath();
@@ -61,7 +53,7 @@ Canvas {
         let lastY = height / 2;
         for (let i = 0; i < points.length; ++i) {
             const x = i * step;
-            const y = height - padding - ((points[i] - low) / span) * availableHeight;
+            const y = yAt(points[i]);
             if (i === 0) {
                 ctx.moveTo(x, y);
             } else {
@@ -92,7 +84,7 @@ Canvas {
         ctx.beginPath();
         for (let i = 0; i < points.length; ++i) {
             const x = i * step;
-            const y = height - padding - ((points[i] - low) / span) * availableHeight;
+            const y = yAt(points[i]);
             i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
         }
         ctx.stroke();
