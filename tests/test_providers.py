@@ -198,6 +198,76 @@ class TestGrok(unittest.TestCase):
         token, _ = _oauth_token(Path(fh.name), now=1_700_000_000)
         self.assertIsNone(token)
 
+    def test_refresh_grant_persists_rotated_tokens(self):
+        import json
+        from aicredits.providers import grok as grok_mod
+        with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+            json.dump({"https://auth.x.ai::abc": {
+                "key": "old",
+                "refresh_token": "rt-old",
+                "expires_at": "2020-01-01T00:00:00Z",
+                "oidc_client_id": "client-1",
+                "oidc_issuer": "https://auth.x.ai",
+            }}, fh)
+        payload = json.dumps({
+            "access_token": "new-access",
+            "refresh_token": "rt-new",
+            "expires_in": 21600,
+            "token_type": "Bearer",
+        }).encode()
+
+        class _Resp:
+            def read(self):
+                return payload
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+
+        def fake_urlopen(req, timeout=None):
+            body = req.data.decode()
+            self.assertIn("grant_type=refresh_token", body)
+            self.assertIn("refresh_token=rt-old", body)
+            self.assertIn("client_id=client-1", body)
+            return _Resp()
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            token, plan = grok_mod._refresh_oauth(Path(fh.name), now=1_700_000_000)
+        self.assertEqual(token, "new-access")
+        self.assertEqual(plan, "SuperGrok")
+        saved = json.loads(Path(fh.name).read_text())["https://auth.x.ai::abc"]
+        self.assertEqual(saved["key"], "new-access")
+        self.assertEqual(saved["refresh_token"], "rt-new")
+        self.assertGreater(_parse_expiry := grok_mod._parse_dt(saved["expires_at"]), 1_700_000_000)
+
+    def test_poll_refreshes_expired_oidc_then_hits_billing(self):
+        import json
+        from aicredits.providers import grok as grok_mod
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as log, \
+             tempfile.NamedTemporaryFile("w", delete=False) as auth:
+            log.write(json.dumps({
+                "ts": "2026-09-04T19:22:26Z", "msg": "billing: fetched credits config",
+                "ctx": {"subscriptionTier": "SuperGrok",
+                        "config": {"creditUsagePercent": 20,
+                                   "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+                                                     "end": "2026-09-08T07:38:19Z"}}},
+            }) + "\n")
+            json.dump({"https://auth.x.ai::abc": {
+                "key": "old", "refresh_token": "rt-old",
+                "expires_at": "2020-01-01T00:00:00Z",
+                "oidc_client_id": "client-1",
+            }}, auth)
+        with mock.patch.object(grok_mod, "_refresh_oauth", return_value=("fresh", "SuperGrok")) as refresh, \
+             mock.patch.object(grok_mod, "_fetch_proxy_billing", return_value=(
+                 {"creditUsagePercent": 79.0,
+                  "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+                                    "end": "2026-09-08T11:38:19Z"}}, "SuperGrok")):
+            reading = Grok().poll({"log_path": log.name, "auth_file": auth.name,
+                                   "live": True, "source": "auto"})
+        refresh.assert_called_once()
+        self.assertEqual(reading.source, "http")
+        self.assertEqual(reading.meters[0].used_pct, 79.0)
+
     def test_proxy_credits_config_maps_percent_and_reset(self):
         from aicredits.providers.grok import _reading_from_config
         reading = _reading_from_config({

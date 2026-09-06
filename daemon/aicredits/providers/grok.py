@@ -2,9 +2,12 @@
 
 `grok login` writes `~/.grok/auth.json`. A GET to
 `cli-chat-proxy.grok.com/v1/billing?format=credits` with that bearer returns
-the same `creditUsagePercent` the TUI would log. Starting the TUI is reserved
-for `source=cli`. If HTTP fails, the last `billing: fetched credits config`
-record in `~/.grok/logs/unified.jsonl` remains a safe fallback.
+the same `creditUsagePercent` the TUI would log. Access tokens last six hours;
+when they expire we exchange `refresh_token` at `auth.x.ai/oauth2/token` and
+write the rotation back into `auth.json` (grok CLI stores the same fields).
+Starting the TUI is reserved for `source=cli`. If HTTP fails, the last
+`billing: fetched credits config` record in `~/.grok/logs/unified.jsonl`
+remains a safe fallback.
 """
 
 from __future__ import annotations
@@ -17,8 +20,9 @@ import shutil
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +33,7 @@ LOG = Path.home() / ".grok" / "logs" / "unified.jsonl"
 AUTH = Path.home() / ".grok" / "auth.json"
 BILLING_URL = "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
 SETTINGS_URL = "https://cli-chat-proxy.grok.com/v1/settings"
+TOKEN_URL = "https://auth.x.ai/oauth2/token"
 NEEDLE = "billing: fetched credits config"
 REFRESH_TIMEOUT = 8
 
@@ -87,6 +92,65 @@ def _oauth_token(path: Path, now: int | None = None) -> tuple[str | None, str | 
         plan = "SuperGrok" if str(key).startswith("https://auth.x.ai::") else None
         return str(token), plan
     return None, None
+
+
+def _refresh_oauth(path: Path, now: int | None = None,
+                   token_url: str = TOKEN_URL) -> tuple[str | None, str | None]:
+    """Exchange grok login's refresh_token and write the rotation back to auth.json.
+
+    Access tokens last six hours. Without this, HTTP billing dies and the last
+    unified.jsonl record (hours old) is treated as current. Refresh tokens rotate.
+    """
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None, None
+    if not isinstance(payload, dict):
+        return None, None
+    entries = [(key, value) for key, value in payload.items()
+               if isinstance(value, dict) and value.get("refresh_token")]
+    entries.sort(key=lambda item: (0 if str(item[0]).startswith("https://auth.x.ai::") else 1))
+    if not entries:
+        return None, None
+    key, entry = entries[0]
+    client_id = entry.get("oidc_client_id")
+    refresh = entry.get("refresh_token")
+    if not client_id or not refresh:
+        return None, None
+    body = urllib.parse.urlencode({
+        "grant_type": "refresh_token",
+        "refresh_token": str(refresh),
+        "client_id": str(client_id),
+    }).encode()
+    try:
+        request = urllib.request.Request(token_url, data=body, headers={
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Accept": "application/json",
+            "User-Agent": "aicredits/0.1",
+        })
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode() or "{}")
+    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError, OSError):
+        return None, None
+    access = data.get("access_token") if isinstance(data, dict) else None
+    if not access:
+        return None, None
+    now = now if now is not None else int(time.time())
+    try:
+        expires_in = int(data.get("expires_in") or 21600)
+    except (TypeError, ValueError):
+        expires_in = 21600
+    entry["key"] = str(access)
+    if data.get("refresh_token"):
+        entry["refresh_token"] = str(data["refresh_token"])
+    entry["expires_at"] = datetime.fromtimestamp(
+        now + expires_in, tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    payload[key] = entry
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(payload, indent=2) + "\n")
+    os.replace(tmp, path)
+    plan = "SuperGrok" if str(key).startswith("https://auth.x.ai::") else None
+    return str(access), plan
 
 
 def _fetch_proxy_billing(token: str, settings: dict[str, Any]) -> tuple[dict[str, Any], str | None] | None:
@@ -217,7 +281,10 @@ class Grok(Provider):
         source = str(settings.get("source") or "auto")
         live = bool(settings.get("live", "log_path" not in settings))
         if live and source != "cli":
-            token, plan_hint = _oauth_token(Path(settings.get("auth_file") or AUTH).expanduser())
+            auth_path = Path(settings.get("auth_file") or AUTH).expanduser()
+            token, plan_hint = _oauth_token(auth_path)
+            if not token:
+                token, plan_hint = _refresh_oauth(auth_path)
             if token:
                 fetched = _fetch_proxy_billing(token, settings)
                 if fetched:
