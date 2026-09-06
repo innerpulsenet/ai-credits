@@ -8,6 +8,11 @@ ConfigModel {
         source: "configGeneral.qml"
     }
     ConfigCategory {
+        name: i18n("Fetch sources")
+        icon: "network-connect"
+        source: "configSources.qml"
+    }
+    ConfigCategory {
         name: i18n("Provider order")
         icon: "view-sort-ascending"
         source: "configProviderOrder.qml"

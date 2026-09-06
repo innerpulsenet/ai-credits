@@ -1,9 +1,10 @@
 """Codex / ChatGPT plan limits.
 
-The preferred path asks Codex App Server for `account/rateLimits/read`. This is
-the same structured interface used by rich Codex clients and does not start a
-model turn. If the installed client is unavailable or the request fails, fall
-back to the last `token_count` event in the CLI's session rollouts.
+The preferred path reads ChatGPT's `wham/usage` API with the access token
+in `~/.codex/auth.json`. That is the same session Codex CLI already has, and
+does not start a model turn. If the token is missing or the request fails,
+ask Codex App Server for `account/rateLimits/read`. Last resort is the latest
+`token_count` event in the CLI's session rollouts.
 
   payload.rate_limits = {primary:   {used_percent, window_minutes: 300,   resets_at},
                          secondary: {used_percent, window_minutes: 10080, resets_at},
@@ -17,6 +18,8 @@ import selectors
 import shutil
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,8 @@ from ..model import BALANCE, OK, WINDOW, Meter, Reading, error_reading
 from .base import Provider, iso_to_epoch, register, tail_lines, window_label
 
 SESSIONS = Path.home() / ".codex" / "sessions"
+AUTH = Path.home() / ".codex" / "auth.json"
+WHAM_URL = "https://chatgpt.com/backend-api/wham/usage"
 APP_SERVER_TIMEOUT = 8
 
 
@@ -66,7 +71,7 @@ def _app_server_rate_limits(command: str = "codex",
     selector: selectors.BaseSelector | None = None
     try:
         process = subprocess.Popen(
-            [executable, "app-server", "--stdio"],
+            [executable, "-s", "read-only", "-a", "never", "app-server", "--stdio"],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
@@ -138,6 +143,88 @@ def _normalize_live_limits(limits: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _oauth_token(path: Path) -> str | None:
+    """Read Codex's ChatGPT access token without copying it into our config."""
+    try:
+        payload = json.loads(path.read_text())
+        token = (payload.get("tokens") or {}).get("access_token")
+        return str(token) if token else None
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+        return None
+
+
+def _oauth_usage(token: str, url: str = WHAM_URL, timeout: int = 15) -> dict[str, Any]:
+    request = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/json",
+        "User-Agent": "aicredits/0.1",
+    })
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode() or "{}")
+
+
+def _window_from_wham(window: dict[str, Any] | None, default_label: str) -> Meter | None:
+    if not isinstance(window, dict) or window.get("used_percent") is None:
+        return None
+    seconds = window.get("limit_window_seconds")
+    minutes = int(seconds) // 60 if isinstance(seconds, (int, float)) and seconds else None
+    return Meter(
+        kind=WINDOW,
+        label=window_label(minutes) if minutes else default_label,
+        used_pct=float(window["used_percent"]),
+        resets_at=window.get("reset_at") or window.get("resets_at"),
+    )
+
+
+def _extra_wham_meters(payload: dict[str, Any]) -> list[Meter]:
+    extras = payload.get("additional_rate_limits")
+    items: list[dict[str, Any]] = []
+    if isinstance(extras, list):
+        items = [item for item in extras if isinstance(item, dict)]
+    elif isinstance(extras, dict):
+        for key, item in extras.items():
+            if isinstance(item, dict):
+                items.append({"limit_id": key, **item})
+    meters: list[Meter] = []
+    for item in items:
+        seconds = item.get("limit_window_seconds") or item.get("window_seconds")
+        minutes = int(seconds) // 60 if isinstance(seconds, (int, float)) and seconds else None
+        name = item.get("name") or item.get("limit_name") or item.get("limit_id")
+        if item.get("used_percent") is None:
+            continue
+        meters.append(Meter(
+            kind=WINDOW,
+            label=str(name or window_label(minutes) or "Extra"),
+            used_pct=float(item["used_percent"]),
+            resets_at=item.get("reset_at") or item.get("resets_at"),
+        ))
+    return meters
+
+
+def _reading_from_wham(payload: dict[str, Any], label: str, url: str | None,
+                       fetched_at: int | None, show_extra: bool = True) -> Reading | None:
+    limits = payload.get("rate_limit") or {}
+    meters: list[Meter] = []
+    for key, fallback in (("primary_window", "5h"), ("secondary_window", "Weekly")):
+        meter = _window_from_wham(limits.get(key), fallback)
+        if meter:
+            meters.append(meter)
+    if show_extra:
+        meters.extend(_extra_wham_meters(payload))
+    credits = payload.get("credits") or {}
+    if credits.get("has_credits") and not credits.get("unlimited"):
+        try:
+            balance = float(credits.get("balance") or 0)
+        except (TypeError, ValueError):
+            balance = 0.0
+        meters.append(Meter(kind=BALANCE, label="Credits", remaining=balance, unit="credits"))
+    if not meters:
+        return None
+    return Reading(id="codex", label=label, status=OK, source="http",
+                   fetched_at=fetched_at, meters=meters, url=url,
+                   plan=payload.get("plan_type"))
+
+
 def _reading_from_limits(limits: dict[str, Any], label: str, url: str | None,
                          fetched_at: int | None, source: str) -> Reading | None:
     meters: list[Meter] = []
@@ -174,12 +261,27 @@ class Codex(Provider):
     def poll(self, settings: dict[str, Any]) -> Reading:
         label = settings.get("label", self.label)
         url = settings.get("url")
+        source = str(settings.get("source") or "auto")
+        show_extra = bool(settings.get("show_extra", True))
+        timeout = int(settings.get("timeout") or APP_SERVER_TIMEOUT)
         # An explicit sessions_dir is also the fixture/testing escape hatch.
-        if settings.get("live", True) and "sessions_dir" not in settings:
-            live = _app_server_rate_limits(str(settings.get("command") or "codex"),
-                                           int(settings.get("timeout") or APP_SERVER_TIMEOUT))
-            if live:
-                reading = _reading_from_limits(_normalize_live_limits(live), label, url,
+        live = bool(settings.get("live", "sessions_dir" not in settings))
+        if live and source != "cli":
+            token = _oauth_token(Path(settings.get("auth_file") or AUTH).expanduser())
+            if token:
+                try:
+                    payload = _oauth_usage(token, str(settings.get("usage_url") or WHAM_URL),
+                                           timeout)
+                    reading = _reading_from_wham(payload, label, url, int(time.time()),
+                                                 show_extra=show_extra)
+                    if reading:
+                        return reading
+                except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, ValueError):
+                    pass
+        if live and source != "oauth":
+            live_limits = _app_server_rate_limits(str(settings.get("command") or "codex"), timeout)
+            if live_limits:
+                reading = _reading_from_limits(_normalize_live_limits(live_limits), label, url,
                                                int(time.time()), "http")
                 if reading:
                     return reading

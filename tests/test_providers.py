@@ -5,6 +5,7 @@ Stdlib unittest so it runs with no install:  python3 -m unittest discover -s tes
 """
 
 import datetime as dt
+import json
 import sys
 import tempfile
 import unittest
@@ -58,6 +59,89 @@ class TestCodex(unittest.TestCase):
         self.assertEqual(reading.status, "error")
         self.assertEqual(reading.meters, [])
 
+    def test_wham_payload_maps_session_and_weekly_windows(self):
+        from aicredits.providers.codex import _reading_from_wham
+        payload = {
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": {"used_percent": 0, "limit_window_seconds": 18000,
+                                   "reset_at": 1788735986},
+                "secondary_window": {"used_percent": 80, "limit_window_seconds": 604800,
+                                     "reset_at": 1788804242},
+            },
+            "credits": {"has_credits": False, "unlimited": False, "balance": "0"},
+        }
+        reading = _reading_from_wham(payload, "Codex", None, 1788710000)
+        self.assertEqual(reading.status, OK)
+        self.assertEqual(reading.plan, "plus")
+        self.assertEqual([(m.label, m.used_pct, m.resets_at) for m in reading.meters],
+                         [("5h", 0.0, 1788735986), ("Weekly", 80.0, 1788804242)])
+
+    def test_wham_extra_limits_are_optional(self):
+        from aicredits.providers.codex import _reading_from_wham
+        payload = {
+            "rate_limit": {
+                "primary_window": {"used_percent": 10, "limit_window_seconds": 18000,
+                                   "reset_at": 1},
+            },
+            "additional_rate_limits": [
+                {"limit_id": "codex-spark", "used_percent": 40,
+                 "limit_window_seconds": 18000, "reset_at": 2,
+                 "name": "Codex Spark 5-hour"},
+            ],
+        }
+        shown = _reading_from_wham(payload, "Codex", None, 1, show_extra=True)
+        hidden = _reading_from_wham(payload, "Codex", None, 1, show_extra=False)
+        self.assertEqual([m.label for m in shown.meters], ["5h", "Codex Spark 5-hour"])
+        self.assertEqual([m.label for m in hidden.meters], ["5h"])
+
+    def test_oauth_token_comes_from_auth_json(self):
+        import json
+        from aicredits.providers.codex import _oauth_token
+        with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+            json.dump({"tokens": {"access_token": "tok-1"}}, fh)
+        self.assertEqual(_oauth_token(Path(fh.name)), "tok-1")
+
+    def test_poll_prefers_oauth_over_cli(self):
+        import json
+        from aicredits.providers import codex as codex_mod
+        payload = {
+            "plan_type": "plus",
+            "rate_limit": {
+                "primary_window": {"used_percent": 12, "limit_window_seconds": 18000,
+                                   "reset_at": 1788735986},
+                "secondary_window": {"used_percent": 34, "limit_window_seconds": 604800,
+                                     "reset_at": 1788804242},
+            },
+        }
+        with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+            json.dump({"tokens": {"access_token": "tok-1"}}, fh)
+        class _Resp:
+            def read(self):
+                return json.dumps(payload).encode()
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+        with mock.patch.object(codex_mod.urllib.request, "urlopen", return_value=_Resp()), \
+             mock.patch.object(codex_mod, "_app_server_rate_limits", return_value={"should": "not"}):
+            reading = Codex().poll({"auth_file": fh.name, "live": True})
+        self.assertEqual(reading.status, OK)
+        self.assertEqual(reading.source, "http")
+        self.assertEqual([m.used_pct for m in reading.meters], [12.0, 34.0])
+
+    def test_cli_source_skips_oauth(self):
+        import json
+        from aicredits.providers import codex as codex_mod
+        with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+            json.dump({"tokens": {"access_token": "tok-1"}}, fh)
+        with mock.patch.object(codex_mod, "_oauth_usage", side_effect=AssertionError("oauth")), \
+             mock.patch.object(codex_mod, "_app_server_rate_limits", return_value=None):
+            reading = Codex().poll({"auth_file": fh.name, "live": True, "source": "cli",
+                                    "sessions_dir": str(FIXTURES / "codex-sessions")})
+        self.assertEqual(reading.status, OK)
+        self.assertEqual(reading.source, "local-log")
+
 
 class TestGrok(unittest.TestCase):
     def test_prefers_fresh_record_from_headless_agent(self):
@@ -72,7 +156,7 @@ class TestGrok(unittest.TestCase):
         }
         with tempfile.NamedTemporaryFile() as fh, mock.patch(
                 "aicredits.providers.grok._refresh_billing_record", return_value=record):
-            reading = Grok().poll({"log_path": fh.name, "live": True})
+            reading = Grok().poll({"log_path": fh.name, "live": True, "source": "cli"})
         self.assertEqual(reading.status, OK)
         self.assertEqual(reading.meters[0].used_pct, 27.0)
         self.assertEqual(reading.fetched_at, 1788549746)
@@ -92,6 +176,65 @@ class TestGrok(unittest.TestCase):
         with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as fh:
             fh.write('{"ts":"2026-08-31T20:00:00Z","msg":"nothing to see"}\n')
         self.assertEqual(Grok().poll({"log_path": fh.name}).status, "error")
+
+    def test_auth_json_token_prefers_xai_oidc(self):
+        import json
+        from aicredits.providers.grok import _oauth_token
+        with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+            json.dump({
+                "https://accounts.x.ai/sign-in": {"key": "legacy", "expires_at": "2099-01-01T00:00:00Z"},
+                "https://auth.x.ai::abc": {"key": "oidc", "expires_at": "2099-01-01T00:00:00Z"},
+            }, fh)
+        token, plan = _oauth_token(Path(fh.name), now=1_700_000_000)
+        self.assertEqual(token, "oidc")
+
+    def test_expired_auth_json_is_ignored(self):
+        import json
+        from aicredits.providers.grok import _oauth_token
+        with tempfile.NamedTemporaryFile("w", delete=False) as fh:
+            json.dump({"https://auth.x.ai::abc": {
+                "key": "old", "expires_at": "2020-01-01T00:00:00.123456789Z",
+            }}, fh)
+        token, _ = _oauth_token(Path(fh.name), now=1_700_000_000)
+        self.assertIsNone(token)
+
+    def test_proxy_credits_config_maps_percent_and_reset(self):
+        from aicredits.providers.grok import _reading_from_config
+        reading = _reading_from_config({
+            "creditUsagePercent": 65.0,
+            "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+                              "end": "2026-09-08T11:38:19.841471+00:00"},
+            "prepaidBalance": {"val": 0},
+            "onDemandCap": {"val": 0},
+        }, "SuperGrok", 1788710000, None)
+        self.assertEqual(reading.status, OK)
+        self.assertEqual((reading.meters[0].label, reading.meters[0].used_pct),
+                         ("Weekly", 65.0))
+        self.assertEqual(reading.plan, "SuperGrok")
+
+    def test_poll_http_beats_the_log(self):
+        import json
+        from aicredits.providers import grok as grok_mod
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as log, \
+             tempfile.NamedTemporaryFile("w", delete=False) as auth:
+            log.write(json.dumps({
+                "ts": "2026-09-04T19:22:26Z", "msg": "billing: fetched credits config",
+                "ctx": {"subscriptionTier": "SuperGrok",
+                        "config": {"creditUsagePercent": 20,
+                                   "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+                                                     "end": "2026-09-08T07:38:19Z"}}},
+            }) + "\n")
+            json.dump({"https://auth.x.ai::abc": {
+                "key": "tok", "expires_at": "2099-01-01T00:00:00Z",
+            }}, auth)
+        with mock.patch.object(grok_mod, "_fetch_proxy_billing", return_value=(
+                {"creditUsagePercent": 65.0,
+                 "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+                                   "end": "2026-09-08T11:38:19Z"}}, "SuperGrok")):
+            reading = Grok().poll({"log_path": log.name, "auth_file": auth.name,
+                                   "live": True, "source": "auto"})
+        self.assertEqual(reading.meters[0].used_pct, 65.0)
+        self.assertEqual(reading.source, "http")
 
 
 class TestModel(unittest.TestCase):
@@ -200,6 +343,24 @@ class TestClaudeAccounting(unittest.TestCase):
         self.assertEqual([m.label for m in meters], ["5h", "7d"])
         self.assertEqual([m.used_pct for m in meters], [95.0, 0.48])
         self.assertIsNotNone(meters[0].resets_at)
+
+    def test_oauth_payload_keeps_model_and_extra_windows(self):
+        from aicredits.providers.anthropic import _meters_from_oauth
+        payload = {
+            "five_hour": {"utilization": 10, "resets_at": "2026-09-04T23:29:59Z"},
+            "seven_day": {"utilization": 20, "resets_at": "2026-09-06T16:00:00Z"},
+            "seven_day_sonnet": {"utilization": 30, "resets_at": "2026-09-06T16:00:00Z"},
+            "seven_day_opus": {"utilization": 40, "resets_at": "2026-09-06T16:00:00Z"},
+            "seven_day_routines": {"utilization": 5, "resets_at": "2026-09-05T00:00:00Z"},
+            "extra_usage": {"utilization": 12, "resets_at": "2026-10-01T00:00:00Z"},
+            "limits": [{"name": "Fable", "weekly_scoped": True, "utilization": 55,
+                        "resets_at": "2026-09-06T16:00:00Z"}],
+        }
+        shown = _meters_from_oauth(payload, show_extra=True)
+        hidden = _meters_from_oauth(payload, show_extra=False)
+        self.assertEqual([m.label for m in hidden], ["5h", "7d"])
+        self.assertEqual([m.label for m in shown],
+                         ["5h", "7d", "Sonnet 7d", "Opus 7d", "Routines", "Extra", "Fable"])
 
     def test_reads_unexpired_local_claude_code_token(self):
         import json
@@ -383,3 +544,47 @@ class TestAntigravityUsage(unittest.TestCase):
         from aicredits.providers.antigravity import parse_usage
         meters = parse_usage("Gemini Models\tWeekly Limit Remaining\t80.51%\t2026-09-10T23:31:47Z")
         self.assertEqual(meters[0].used_pct, 19.5)
+
+
+class TestOpenRouterKey(unittest.TestCase):
+    def test_spending_cap_becomes_a_meter(self):
+        from aicredits.providers.openrouter import _meters_from_key
+        meters = _meters_from_key({"limit": 30, "limit_remaining": 12, "usage": 18})
+        self.assertEqual(meters[0].label, "Key cap")
+        self.assertEqual(meters[0].used_pct, 60.0)
+        self.assertEqual(meters[0].remaining, 12.0)
+        self.assertEqual(meters[0].total, 30.0)
+
+    def test_period_spend_is_omitted_when_zero(self):
+        from aicredits.providers.openrouter import _meters_from_key
+        meters = _meters_from_key({"usage_daily": 0, "usage_weekly": 0, "usage_monthly": 0})
+        self.assertEqual(meters, [])
+
+    def test_period_spend_is_kept_when_nonzero(self):
+        from aicredits.providers.openrouter import _meters_from_key
+        meters = _meters_from_key({"usage_daily": 1.25, "usage_weekly": 4, "usage_monthly": 9.5})
+        self.assertEqual([(m.label, m.amount_usd) for m in meters],
+                         [("Today", 1.25), ("7d", 4.0), ("30d", 9.5)])
+
+    def test_credits_survive_a_key_api_failure(self):
+        from aicredits.providers import openrouter as or_mod
+        credits = {"data": {"total_credits": 22.0, "total_usage": 13.45}}
+        class _Resp:
+            def __init__(self, payload):
+                self._payload = json.dumps(payload).encode()
+            def read(self):
+                return self._payload
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+        def fake_urlopen(request, timeout=15):
+            if request.full_url.endswith("/credits"):
+                return _Resp(credits)
+            raise or_mod.urllib.error.URLError("offline")
+        with mock.patch.object(or_mod.secrets, "get", return_value="sk-or-v1-test"), \
+             mock.patch.object(or_mod.urllib.request, "urlopen", side_effect=fake_urlopen):
+            reading = or_mod.OpenRouter().poll({})
+        self.assertEqual(reading.status, OK)
+        self.assertEqual(reading.meters[0].label, "Credits")
+        self.assertAlmostEqual(reading.meters[0].remaining, 8.55, places=2)

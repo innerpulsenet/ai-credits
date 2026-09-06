@@ -248,24 +248,45 @@ def _local_plan(path: Path = CREDENTIALS,
         return None
 
 
-def _meters_from_oauth(payload: dict[str, Any]) -> list[Meter]:
+def _meters_from_oauth(payload: dict[str, Any], show_extra: bool = True) -> list[Meter]:
     """Map the usage payload defensively — the shape is undocumented."""
     meters: list[Meter] = []
     # The current endpoint uses named objects. Keep the generic parser below as
     # a fallback for older/alternate payloads, but these names are what lets us
     # distinguish the two headline subscription limits.
     named = (("five_hour", "5h"), ("seven_day", "7d"))
-    for key, label in named:
+    extra_named = (
+        ("seven_day_sonnet", "Sonnet 7d"),
+        ("seven_day_opus", "Opus 7d"),
+        ("seven_day_routines", "Routines"),
+        ("seven_day_cowork", "Cowork"),
+        ("extra_usage", "Extra"),
+    )
+    for key, label in named + (extra_named if show_extra else ()):
         item = payload.get(key)
         if not isinstance(item, dict) or item.get("utilization") is None:
             continue
-        pct = float(item["utilization"])
         meters.append(Meter(
             kind=WINDOW,
             label=label,
-            used_pct=pct,  # utilization is already a percentage, including 0–1%.
+            used_pct=float(item["utilization"]),
             resets_at=iso_to_epoch(item.get("resets_at")),
         ))
+    if show_extra:
+        for item in payload.get("limits") or []:
+            if not isinstance(item, dict) or not item.get("weekly_scoped"):
+                continue
+            if item.get("utilization") is None:
+                continue
+            name = str(item.get("name") or item.get("label") or "Scoped 7d")
+            if name.lower() in ("all models", "all"):
+                continue
+            meters.append(Meter(
+                kind=WINDOW,
+                label=name,
+                used_pct=float(item["utilization"]),
+                resets_at=iso_to_epoch(item.get("resets_at")),
+            ))
     if meters:
         return meters
 
@@ -289,12 +310,12 @@ def _meters_from_oauth(payload: dict[str, Any]) -> list[Meter]:
     return meters
 
 
-def _cached_usage(path: Path = CLAUDE_CONFIG) -> tuple[list[Meter], int | None]:
+def _cached_usage(path: Path = CLAUDE_CONFIG, show_extra: bool = True) -> tuple[list[Meter], int | None]:
     """Use Claude Code's last successful usage fetch when the API is offline."""
     try:
         cached = json.loads(path.read_text()).get("cachedUsageUtilization") or {}
         fetched_ms = int(cached.get("fetchedAtMs") or 0)
-        meters = _meters_from_oauth(cached.get("utilization") or {})
+        meters = _meters_from_oauth(cached.get("utilization") or {}, show_extra=show_extra)
         return meters, (fetched_ms // 1000 if fetched_ms else None)
     except (OSError, json.JSONDecodeError, TypeError, ValueError):
         return [], None
@@ -308,6 +329,7 @@ class Claude(Provider):
 
     def poll(self, settings: dict[str, Any]) -> Reading:
         label = settings.get("label", self.label)
+        show_extra = bool(settings.get("show_extra", True))
         supplied = secrets.get("claude")
         token = supplied or _local_oauth_token()
         if not token:
@@ -315,7 +337,7 @@ class Claude(Provider):
         if token:
             try:
                 payload = _oauth_usage(token)
-                meters = _meters_from_oauth(payload)
+                meters = _meters_from_oauth(payload, show_extra=show_extra)
                 if meters:
                     return Reading(id=self.id, label=label, status=OK, source="http",
                                    fetched_at=int(time.time()), meters=meters,
@@ -327,7 +349,7 @@ class Claude(Provider):
                     token = _refresh_local_login(settings)
                     if token:
                         try:
-                            meters = _meters_from_oauth(_oauth_usage(token))
+                            meters = _meters_from_oauth(_oauth_usage(token), show_extra=show_extra)
                             if meters:
                                 return Reading(id=self.id, label=label, status=OK,
                                                source="http", fetched_at=int(time.time()),
@@ -337,7 +359,7 @@ class Claude(Provider):
                             pass
             except (urllib.error.URLError, ValueError, TimeoutError):
                 pass
-        meters, fetched_at = _cached_usage()
+        meters, fetched_at = _cached_usage(show_extra=show_extra)
         if meters:
             return Reading(id=self.id, label=label, status=OK, source="local-log",
                            fetched_at=fetched_at, meters=meters, url=settings.get("url"),

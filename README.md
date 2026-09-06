@@ -18,13 +18,13 @@ Two decoupled pieces joined by one JSON file:
 
 | Provider | Source | Freshness |
 |---|---|---|
-| Codex | live `codex app-server` → `account/rateLimits/read` (5h + weekly); falls back to the latest session rollout | live / cached |
-| SuperGrok | briefly starts the authenticated `grok` client in a private terminal to refresh `billing: fetched credits config`; falls back to the latest unified log record | live / cached |
+| Codex | ChatGPT `wham/usage` via `~/.codex/auth.json`, then `codex app-server` `account/rateLimits/read`; session rollout fallback | live / cached |
+| SuperGrok | `cli-chat-proxy.grok.com/v1/billing` via `~/.grok/auth.json`; TUI spawn only if source=cli; log fallback | live / cached |
 | ZCode GLM | live `GET api.z.ai/api/monitor/usage/quota/limit` (5h + weekly credit windows), key via `aicredits auth set zai`; falls back to `~/.zcode/v2/logs/*.log` | live |
 | Nous Portal | live `GET /api/oauth/account` + `/api/billing/state`, token from `~/.hermes/auth.json` | live |
-| Claude | live OAuth usage via Claude Code's local login (5h + 7d); falls back to Claude Code's cached usage, then transcript spend | live / cached |
+| Claude | live OAuth usage via Claude Code's local login (5h + 7d, plus optional Sonnet/Opus/Routines/Extra); falls back to Claude Code's cached usage, then transcript spend | live / cached |
 | Alibaba | `bl usage token-plan --output json` (official CLI, needs `bl auth login --console`); falls back to `~/.qwen/usage_record.jsonl` consumption | live / last `qwen` run |
-| OpenRouter | live `GET /api/v1/credits` — needs a stored **management** key | live |
+| OpenRouter | live `GET /api/v1/credits` plus optional `/api/v1/key` spend/cap — needs a stored **management** key | live |
 | Antigravity | `agy --print "/usage" --output-format text` (Gemini + Claude/GPT groups, weekly + 5h) | live |
 
 Several of these are private, undocumented endpoints or log formats that can

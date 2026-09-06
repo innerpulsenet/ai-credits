@@ -33,6 +33,15 @@ PROVIDER_DEFAULTS: dict[str, tuple[str, str, int]] = {
     "antigravity": ("Antigravity",  "https://antigravity.google/",                1800),
 }
 
+# Fetch-path defaults. Adapters treat a missing key as these values; they are
+# listed here so `aicredits config get providers` and the settings panel agree.
+PROVIDER_FETCH_DEFAULTS: dict[str, dict[str, Any]] = {
+    "codex": {"source": "auto", "show_extra": True},
+    "grok": {"source": "auto"},
+    "claude": {"show_extra": True},
+    "openrouter": {"fetch_key": True},
+}
+
 DEFAULTS: dict[str, Any] = {
     "general": {
         "warn_pct": 80.0,
@@ -43,7 +52,8 @@ DEFAULTS: dict[str, Any] = {
         "spark_points": 24,
     },
     "providers": {
-        pid: {"enabled": True, "interval": interval, "label": label, "url": url}
+        pid: {"enabled": True, "interval": interval, "label": label, "url": url,
+              **PROVIDER_FETCH_DEFAULTS.get(pid, {})}
         for pid, (label, url, interval) in PROVIDER_DEFAULTS.items()
     },
 }
