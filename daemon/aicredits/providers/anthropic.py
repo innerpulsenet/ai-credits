@@ -1,21 +1,23 @@
 """Claude usage.
 
-Two paths, in order of preference:
+Paths, in order of preference:
 
 1. `GET https://api.anthropic.com/api/oauth/usage` with Claude Code's own OAuth
-   access token, which returns the real 5-hour and weekly subscription windows.
-   Current native Claude Code releases keep this in
-   `~/.claude/.credentials.json`. A token explicitly stored with
-   `aicredits auth set claude` still takes precedence.
+   access token, which returns the real 5-hour and weekly subscription windows
+   plus model-scoped weekly carve-outs (Fable on Max). Current native Claude
+   Code releases keep this in `~/.claude/.credentials.json`. A token stored
+   with `aicredits auth set claude` still takes precedence.
 
-2. Claude Desktop's `plan-usage-history.json` (5h/7d percents). Claude Code
-   2.1.x can empty `.credentials.json` after a failed keyring write while
-   Desktop keeps sampling.
+2. `GET https://claude.ai/api/organizations/{org}/usage` with the Firefox
+   claude.ai session. Same payload as (1), including the Fable weekly bar.
+   Used when Claude Code's credentials file is empty.
 
-3. Claude Code's last `cachedUsageUtilization`, but only while those windows
+3. Claude Desktop's `plan-usage-history.json` (5h/7d percents only).
+
+4. Claude Code's last `cachedUsageUtilization`, but only while those windows
    have not reset — expired cache used to overwrite a better last-good.
 
-4. Otherwise, local transcript accounting: sum the `usage` blocks Claude Code
+5. Otherwise, local transcript accounting: sum the `usage` blocks Claude Code
    writes to ~/.claude/projects/**/*.jsonl and price them at published API
    rates. That measures consumption, not remaining quota — an honest proxy, and
    labelled as an estimate.
@@ -28,6 +30,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sqlite3
 import subprocess
 import tempfile
 import time
@@ -47,6 +51,11 @@ CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
 CLAUDE_CONFIG = Path.home() / ".claude.json"
 DESKTOP_HISTORY = Path.home() / ".config" / "Claude" / "plan-usage-history.json"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+WEB_USAGE_URL = "https://claude.ai/api/organizations/{org}/usage"
+FIREFOX_ROOTS = (
+    Path.home() / ".config" / "mozilla" / "firefox",
+    Path.home() / ".mozilla" / "firefox",
+)
 
 # USD per million tokens (input, output). Prefix match, longest first, so dated
 # variants fall back to their family. Override in config: [providers.claude.pricing]
@@ -202,6 +211,65 @@ def _oauth_usage(token: str, timeout: int = 15) -> dict[str, Any]:
         return json.loads(response.read().decode())
 
 
+def _organization_uuid(path: Path = CLAUDE_CONFIG) -> str | None:
+    try:
+        account = json.loads(path.read_text()).get("oauthAccount") or {}
+        org = account.get("organizationUuid")
+        return str(org) if org else None
+    except (OSError, json.JSONDecodeError, TypeError, AttributeError):
+        return None
+
+
+def _firefox_cookie_header() -> str | None:
+    """Claude.ai session cookies from the default Firefox profile.
+
+    urllib is blocked by Cloudflare; curl with the browser's own cookies is not.
+    The sqlite file is copied because Firefox keeps it locked.
+    """
+    dbs: list[Path] = []
+    for root in FIREFOX_ROOTS:
+        dbs.extend(root.glob("*/cookies.sqlite"))
+    dbs.sort(key=lambda path: path.stat().st_mtime if path.exists() else 0, reverse=True)
+    for db in dbs:
+        try:
+            with tempfile.TemporaryDirectory(prefix="aicredits-ff-") as tmp:
+                copy = Path(tmp) / "cookies.sqlite"
+                shutil.copy2(db, copy)
+                conn = sqlite3.connect(copy)
+                try:
+                    rows = conn.execute(
+                        "SELECT host, name, value FROM moz_cookies WHERE host LIKE ?",
+                        ("%claude.ai%",),
+                    ).fetchall()
+                finally:
+                    conn.close()
+            cookie = "; ".join(f"{name}={value}" for _host, name, value in rows)
+            if "sessionKey" in cookie:
+                return cookie
+        except (OSError, sqlite3.Error):
+            continue
+    return None
+
+
+def _web_usage(org: str, cookie: str, timeout: int = 15) -> dict[str, Any]:
+    """Usage payload from claude.ai using a browser session, not Claude Code OAuth."""
+    result = subprocess.run(
+        ["curl", "-sS", "--max-time", str(timeout),
+         "-H", "Accept: application/json",
+         "-H", "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:142.0) Gecko/20100101 Firefox/142.0",
+         "-H", "Referer: https://claude.ai/settings/usage",
+         "-H", "Origin: https://claude.ai",
+         "-H", f"Cookie: {cookie}",
+         WEB_USAGE_URL.format(org=org)],
+        capture_output=True, text=True, timeout=timeout + 5)
+    if result.returncode != 0:
+        raise urllib.error.URLError(result.stderr.strip() or "curl failed")
+    payload = json.loads(result.stdout)
+    if not isinstance(payload, dict) or payload.get("type") == "error":
+        raise urllib.error.URLError("claude.ai usage returned an error")
+    return payload
+
+
 def _credentials_hollow(path: Path = CREDENTIALS) -> bool:
     """True when Claude Code left an OAuth stub with no usable tokens."""
     try:
@@ -256,11 +324,18 @@ def _local_plan(path: Path = CREDENTIALS,
         pass
     try:
         account = json.loads(config_path.read_text()).get("oauthAccount") or {}
-        # Explicit organization classifications only: billing type and a
-        # generic rate-limit tier do not distinguish paid subscription levels.
-        return {"claude_pro": "Pro", "claude_max": "Max",
-                "claude_team": "Team", "claude_enterprise": "Enterprise",
-                "claude_free": "Free"}.get(account.get("organizationType"))
+        # organizationType is the paid tier. Max also carries 5x vs 20x in the
+        # rate-limit tier name; that is the difference the tray chip should show.
+        label = {"claude_pro": "Pro", "claude_max": "Max",
+                 "claude_team": "Team", "claude_enterprise": "Enterprise",
+                 "claude_free": "Free"}.get(account.get("organizationType"))
+        if label == "Max":
+            tier = str(account.get("organizationRateLimitTier") or "")
+            if "20x" in tier:
+                return "Max 20x"
+            if "5x" in tier:
+                return "Max 5x"
+        return label
     except (OSError, ValueError, TypeError, AttributeError):
         return None
 
@@ -291,17 +366,31 @@ def _meters_from_oauth(payload: dict[str, Any], show_extra: bool = True) -> list
         ))
     if show_extra:
         for item in payload.get("limits") or []:
-            if not isinstance(item, dict) or not item.get("weekly_scoped"):
+            if not isinstance(item, dict):
                 continue
-            if item.get("utilization") is None:
+            kind = str(item.get("kind") or "")
+            scoped = bool(item.get("weekly_scoped")) or kind == "weekly_scoped"
+            if not scoped:
                 continue
-            name = str(item.get("name") or item.get("label") or "Scoped 7d")
+            pct = item.get("utilization")
+            if pct is None:
+                pct = item.get("percent")
+            if pct is None:
+                continue
+            scope = item.get("scope")
+            if not isinstance(scope, dict):
+                scope = {}
+            model = scope.get("model")
+            if not isinstance(model, dict):
+                model = {}
+            name = str(item.get("name") or item.get("label")
+                       or model.get("display_name") or "Scoped 7d")
             if name.lower() in ("all models", "all"):
                 continue
             meters.append(Meter(
                 kind=WINDOW,
                 label=name,
-                used_pct=float(item["utilization"]),
+                used_pct=float(pct),
                 resets_at=iso_to_epoch(item.get("resets_at")),
             ))
     if meters:
@@ -428,6 +517,18 @@ class Claude(Provider):
                         except (urllib.error.URLError, ValueError, TimeoutError):
                             pass
             except (urllib.error.URLError, ValueError, TimeoutError):
+                pass
+        org = settings.get("org") or _organization_uuid()
+        cookie = _firefox_cookie_header()
+        if org and cookie:
+            try:
+                meters = _meters_from_oauth(_web_usage(str(org), cookie), show_extra=show_extra)
+                if meters:
+                    return Reading(id=self.id, label=label, status=OK, source="http",
+                                   fetched_at=int(time.time()), meters=meters,
+                                   url=settings.get("url"), plan=_local_plan())
+            except (urllib.error.URLError, ValueError, TimeoutError,
+                    subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
                 pass
         desktop = Path(settings.get("desktop_history") or DESKTOP_HISTORY).expanduser()
         meters, fetched_at = _desktop_usage(desktop)

@@ -441,6 +441,41 @@ class TestClaudeAccounting(unittest.TestCase):
         self.assertEqual([m.label for m in shown],
                          ["5h", "7d", "Sonnet 7d", "Opus 7d", "Routines", "Extra", "Fable"])
 
+    def test_oauth_limits_array_surfaces_scoped_fable_window(self):
+        from aicredits.providers.anthropic import _meters_from_oauth
+        payload = {
+            "five_hour": {"utilization": 5.0, "resets_at": "2026-09-07T21:30:00Z"},
+            "seven_day": {"utilization": 6.0, "resets_at": "2026-09-13T16:00:00Z"},
+            "seven_day_opus": None,
+            "seven_day_sonnet": None,
+            "limits": [
+                {"kind": "session", "group": "session", "percent": 5,
+                 "resets_at": "2026-09-07T21:30:00Z", "scope": None},
+                {"kind": "weekly_all", "group": "weekly", "percent": 6,
+                 "resets_at": "2026-09-13T16:00:00Z", "scope": None},
+                {"kind": "weekly_scoped", "group": "weekly", "percent": 7,
+                 "resets_at": "2026-09-13T16:00:00Z",
+                 "scope": {"model": {"id": None, "display_name": "Fable"}, "surface": None},
+                 "is_active": True},
+            ],
+        }
+        shown = _meters_from_oauth(payload, show_extra=True)
+        hidden = _meters_from_oauth(payload, show_extra=False)
+        self.assertEqual([m.label for m in hidden], ["5h", "7d"])
+        self.assertEqual([(m.label, m.used_pct) for m in shown],
+                         [("5h", 5.0), ("7d", 6.0), ("Fable", 7.0)])
+        self.assertIsNotNone(shown[2].resets_at)
+
+    def test_inactive_scoped_limit_is_still_shown(self):
+        from aicredits.providers.anthropic import _meters_from_oauth
+        payload = {
+            "five_hour": {"utilization": 1},
+            "limits": [{"kind": "weekly_scoped", "percent": 0, "is_active": False,
+                        "scope": {"model": {"display_name": "Fable"}}}],
+        }
+        self.assertEqual([(m.label, m.used_pct) for m in _meters_from_oauth(payload)],
+                         [("5h", 1.0), ("Fable", 0.0)])
+
     def test_reads_unexpired_local_claude_code_token(self):
         import json
         import tempfile

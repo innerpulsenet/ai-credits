@@ -40,6 +40,7 @@ class RecoveryTests(unittest.TestCase):
              patch.object(anthropic, '_refresh_local_login') as refresh, \
              patch.object(anthropic, '_oauth_usage', side_effect=urllib.error.URLError('offline')), \
              patch.object(anthropic, '_desktop_usage', return_value=([], None)), \
+             patch.object(anthropic, '_firefox_cookie_header', return_value=None), \
              patch.object(anthropic, '_cached_usage', return_value=([Meter(WINDOW, '5h', 42)], 100)):
             self.assertEqual(anthropic.Claude().poll({}).fetched_at, 100)
         refresh.assert_not_called()
@@ -120,12 +121,30 @@ class ClaudeFallbackTests(unittest.TestCase):
             with patch.object(anthropic.secrets, 'get', return_value=None), \
                  patch.object(anthropic, '_local_oauth_token', return_value=None), \
                  patch.object(anthropic, '_refresh_local_login', return_value=None), \
-                 patch.object(anthropic, '_cached_usage', return_value=([], None)):
+                 patch.object(anthropic, '_cached_usage', return_value=([], None)), \
+                 patch.object(anthropic, '_firefox_cookie_header', return_value=None):
                 reading = anthropic.Claude().poll({'desktop_history': str(history)})
         self.assertEqual(reading.status, 'ok')
         self.assertEqual(reading.source, 'local-log')
         self.assertEqual([(m.label, m.used_pct) for m in reading.meters],
                          [('5h', 31.0), ('7d', 13.0)])
+
+    def test_poll_uses_browser_session_for_fable_window(self):
+        payload = {
+            'five_hour': {'utilization': 1.0, 'resets_at': '2026-09-08T01:20:00Z'},
+            'seven_day': {'utilization': 0.0, 'resets_at': '2026-09-13T16:00:00Z'},
+            'limits': [{'kind': 'weekly_scoped', 'percent': 0, 'is_active': False,
+                        'scope': {'model': {'display_name': 'Fable'}}}],
+        }
+        with patch.object(anthropic.secrets, 'get', return_value=None), \
+             patch.object(anthropic, '_local_oauth_token', return_value=None), \
+             patch.object(anthropic, '_refresh_local_login', return_value=None), \
+             patch.object(anthropic, '_organization_uuid', return_value='org'), \
+             patch.object(anthropic, '_firefox_cookie_header', return_value='sessionKey=x'), \
+             patch.object(anthropic, '_web_usage', return_value=payload):
+            reading = anthropic.Claude().poll({})
+        self.assertEqual(reading.source, 'http')
+        self.assertEqual([m.label for m in reading.meters], ['5h', '7d', 'Fable'])
 
 
 class RecoveryStoreTests(unittest.TestCase):
@@ -198,6 +217,27 @@ class ClaudePlanTests(unittest.TestCase):
             self.assertEqual(anthropic._local_plan(credentials, profile), 'Pro')
             credentials.write_text('{"claudeAiOauth": {"subscriptionType": "max"}}')
             self.assertEqual(anthropic._local_plan(credentials, profile), 'max')
+
+    def test_max_rate_limit_tier_is_shown(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            credentials = Path(root) / 'credentials.json'
+            profile = Path(root) / 'config.json'
+            credentials.write_text('{}')
+            profile.write_text(json.dumps({
+                'oauthAccount': {
+                    'organizationType': 'claude_max',
+                    'organizationRateLimitTier': 'default_claude_max_5x',
+                },
+            }))
+            self.assertEqual(anthropic._local_plan(credentials, profile), 'Max 5x')
+            profile.write_text(json.dumps({
+                'oauthAccount': {
+                    'organizationType': 'claude_max',
+                    'organizationRateLimitTier': 'default_claude_max_20x',
+                },
+            }))
+            self.assertEqual(anthropic._local_plan(credentials, profile), 'Max 20x')
 
     def test_unknown_profile_does_not_guess_a_plan(self):
         import tempfile
