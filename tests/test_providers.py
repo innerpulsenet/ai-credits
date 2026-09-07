@@ -352,6 +352,15 @@ class TestTrend(unittest.TestCase):
         self.assertEqual(out["projected_pct"], 55)
         self.assertEqual(out["exhausts_at"], 21600)
 
+    def test_near_reset_still_projects_pace(self):
+        # Codex-style: a real slope, but the window ends before usage can
+        # climb a full percent. That is still an "On pace" figure.
+        points = [(0, 16.0), (3600, 16.5), (7200, 17.0)]
+        out = trend.project(points, 17.0, 7200, resets_at=7200 + 1800)
+        self.assertIsNotNone(out)
+        self.assertEqual(out["projected_pct"], 17)
+        self.assertIn("exhausts_at", out)
+
     def test_flat_usage_has_no_projection(self):
         flat = [(0, 50.0), (3600, 50.0), (7200, 50.0)]
         self.assertIsNone(trend.project(flat, 50.0, 7200, None))
