@@ -347,6 +347,28 @@ def _cached_usage(path: Path = CLAUDE_CONFIG, show_extra: bool = True,
         return [], None
 
 
+def _reset_after_drop(samples: list[Any], key: str, window_seconds: int) -> int | None:
+    """Next window end from the last sharp drop in Desktop samples.
+
+    The file only stores percents. A drop of more than 5 points is the same
+    cycle-reset signal the shared projector uses, so 5h/7d get a resets_at
+    and the same "On pace" estimate as every other provider.
+    """
+    previous = None
+    drop_ms = None
+    for sample in samples:
+        value = (sample.get("u") or {}).get(key)
+        if value is None:
+            continue
+        value = float(value)
+        if previous is not None and value < previous - 5.0:
+            drop_ms = sample.get("t")
+        previous = value
+    if not drop_ms:
+        return None
+    return int(drop_ms) // 1000 + window_seconds
+
+
 def _desktop_usage(path: Path = DESKTOP_HISTORY) -> tuple[list[Meter], int | None]:
     """Claude Desktop writes rolling 5h/7d percents even when CLI OAuth is empty."""
     try:
@@ -359,9 +381,11 @@ def _desktop_usage(path: Path = DESKTOP_HISTORY) -> tuple[list[Meter], int | Non
         fetched = int(ts) // 1000 if ts else None
         meters: list[Meter] = []
         if usage.get("fh") is not None:
-            meters.append(Meter(kind=WINDOW, label="5h", used_pct=float(usage["fh"])))
+            meters.append(Meter(kind=WINDOW, label="5h", used_pct=float(usage["fh"]),
+                                resets_at=_reset_after_drop(samples, "fh", 5 * 3600)))
         if usage.get("sd") is not None:
-            meters.append(Meter(kind=WINDOW, label="7d", used_pct=float(usage["sd"])))
+            meters.append(Meter(kind=WINDOW, label="7d", used_pct=float(usage["sd"]),
+                                resets_at=_reset_after_drop(samples, "sd", 7 * 86400)))
         return meters, fetched
     except (OSError, json.JSONDecodeError, TypeError, ValueError, AttributeError):
         return [], None

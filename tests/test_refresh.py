@@ -70,6 +70,29 @@ class ClaudeFallbackTests(unittest.TestCase):
                          [('5h', 31.0), ('7d', 13.0)])
         self.assertEqual(fetched, 1788730983)
 
+    def test_desktop_history_infers_quota_reset_times(self):
+        import tempfile
+        # Desktop samples have no resets_at. Other providers show "On pace"
+        # only when a window end is known, so recover it from the last drop.
+        drop_7d_ms = 1_788_000_000_000
+        drop_5h_ms = drop_7d_ms + 2 * 86400 * 1000
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / 'plan-usage-history.json'
+            path.write_text(json.dumps({
+                'samples': [
+                    {'t': drop_7d_ms - 1_000, 'u': {'fh': 10, 'sd': 80}},
+                    {'t': drop_7d_ms, 'u': {'fh': 10, 'sd': 0}},
+                    {'t': drop_5h_ms - 1_000, 'u': {'fh': 90, 'sd': 20}},
+                    {'t': drop_5h_ms, 'u': {'fh': 0, 'sd': 22}},
+                    {'t': drop_5h_ms + 600_000, 'u': {'fh': 24, 'sd': 24}},
+                ],
+            }))
+            meters, _fetched = anthropic._desktop_usage(path)
+        by_label = {meter.label: meter for meter in meters}
+        self.assertEqual(by_label['5h'].used_pct, 24.0)
+        self.assertEqual(by_label['5h'].resets_at, drop_5h_ms // 1000 + 5 * 3600)
+        self.assertEqual(by_label['7d'].resets_at, drop_7d_ms // 1000 + 7 * 86400)
+
     def test_expired_claude_code_cache_is_ignored(self):
         import tempfile
         with tempfile.TemporaryDirectory() as root:
