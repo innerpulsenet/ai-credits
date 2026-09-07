@@ -13,7 +13,7 @@ ConfigModel {
         source: "configSources.qml"
     }
     ConfigCategory {
-        name: i18n("Provider order")
+        name: i18n("Providers")
         icon: "view-sort-ascending"
         source: "configProviderOrder.qml"
     }

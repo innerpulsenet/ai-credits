@@ -14,13 +14,13 @@ function sorted(providers, saved) {
 
 function catalog() {
     return [
-        {id: "alibaba", label: "Alibaba"},
-        {id: "antigravity", label: "Antigravity"},
-        {id: "claude", label: "Claude"},
-        {id: "codex", label: "Codex"},
-        {id: "nous", label: "Nous Portal"},
-        {id: "openrouter", label: "OpenRouter"},
-        {id: "grok", label: "SuperGrok"},
-        {id: "zai", label: "ZCode GLM"}
+        {id: "alibaba", label: "Alibaba", glyph: "AL", color: "#f97316"},
+        {id: "antigravity", label: "Antigravity", glyph: "AG", color: "#ec4899"},
+        {id: "claude", label: "Claude", glyph: "CL", color: "#d97706"},
+        {id: "codex", label: "Codex", glyph: "CX", color: "#10a37f"},
+        {id: "nous", label: "Nous Portal", glyph: "NP", color: "#3b82f6"},
+        {id: "openrouter", label: "OpenRouter", glyph: "OR", color: "#6366f1"},
+        {id: "grok", label: "SuperGrok", glyph: "GK", color: "#9333ea"},
+        {id: "zai", label: "ZCode GLM", glyph: "ZA", color: "#06b6d4"}
     ];
 }
