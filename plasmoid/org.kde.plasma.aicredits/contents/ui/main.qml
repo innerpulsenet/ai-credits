@@ -174,6 +174,19 @@ PlasmoidItem {
 
     // Where amber sits on the ramp; MeterBar's gradient shares the anchor.
     readonly property real usageAmberPct: 60
+    // Prepaid balances have no used%. Colour them as a tank that hits amber
+    // at this many currency units left and red at empty; the green side is
+    // scaled so that amount sits at the same 60% mark as usage bars.
+    readonly property real remainingAmberUsd: 3
+    readonly property real remainingFullUsd: remainingAmberUsd / (1 - usageAmberPct / 100)
+
+    function remainingColor(amount) {
+        if (amount === undefined || amount === null)
+            return Kirigami.Theme.disabledTextColor;
+        const full = Math.max(root.remainingFullUsd, 0.01);
+        const health = Math.max(0, Math.min(1, amount / full));
+        return root.usageColor(100 * (1 - health));
+    }
 
     /*
      * Continuous green -> amber -> red ramp across the whole 0-100 range, so a

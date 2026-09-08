@@ -25,6 +25,18 @@ ColumnLayout {
         && !!meter.resets_at && meter.projection.exhausts_at < meter.resets_at
 
     readonly property bool hasPct: meter.used_pct !== undefined && !meter.expired && !resetDue
+    readonly property bool hasRemaining: meter.kind === "balance"
+        && meter.remaining !== undefined && !meterItem.hasPct
+        && !meter.expired && !resetDue
+    readonly property real remainingHealth: {
+        if (!meterItem.hasRemaining)
+            return 0;
+        const full = Math.max(meterItem.owner.remainingFullUsd, 0.01);
+        return Math.max(0, Math.min(100, meter.remaining / full * 100));
+    }
+    readonly property real fillPct: meterItem.hasRemaining
+        ? meterItem.remainingHealth
+        : Math.max(0, Math.min(100, meter.used_pct || 0))
     readonly property string level: Severity.of(meterItem.hasPct ? meter.used_pct : -1,
                                                 warnPct, criticalPct)
 
@@ -56,14 +68,20 @@ ColumnLayout {
 
         PlasmaComponents.Label {
             text: meterItem.figure()
-            font: Kirigami.Theme.smallFont
-            color: meterItem.owner.ink
+            font.pixelSize: meterItem.hasRemaining
+                            ? meterItem.owner.figureSize
+                            : Kirigami.Theme.smallFont.pixelSize
+            font.weight: meterItem.hasRemaining ? Font.DemiBold : Font.Normal
+            color: meterItem.stale ? meterItem.owner.ink
+                   : meterItem.hasRemaining
+                     ? meterItem.owner.remainingColor(meterItem.meter.remaining)
+                     : meterItem.owner.ink
         }
     }
 
     Rectangle {
         id: track
-        visible: meterItem.hasPct
+        visible: meterItem.hasPct || meterItem.hasRemaining
         Layout.fillWidth: true
         Layout.topMargin: 4
         Layout.preferredHeight: 8
@@ -74,7 +92,7 @@ ColumnLayout {
 
         Rectangle {
             id: fill
-            readonly property real pct: Math.max(0, Math.min(100, meterItem.meter.used_pct || 0))
+            readonly property real pct: meterItem.fillPct
             width: pct <= 0 ? 0 : Math.max(height, track.width * (pct / 100))
             height: track.height
             radius: track.radius
@@ -96,18 +114,36 @@ ColumnLayout {
                 orientation: Gradient.Horizontal
                 GradientStop {
                     position: 0.0
-                    color: meterItem.owner.usageColor(0)
+                    color: meterItem.hasRemaining
+                           ? meterItem.owner.remainingColor(meterItem.owner.remainingFullUsd)
+                           : meterItem.owner.usageColor(0)
                 }
                 GradientStop {
-                    position: fill.pct > meterItem.owner.usageAmberPct
-                              ? meterItem.owner.usageAmberPct / fill.pct : 1.0
-                    color: fill.pct > meterItem.owner.usageAmberPct
-                           ? meterItem.owner.usageColor(meterItem.owner.usageAmberPct)
-                           : meterItem.owner.usageColor(fill.pct)
+                    position: {
+                        if (meterItem.hasRemaining) {
+                            const amberHealth = 100 - meterItem.owner.usageAmberPct;
+                            return fill.pct > amberHealth ? amberHealth / fill.pct : 1.0;
+                        }
+                        return fill.pct > meterItem.owner.usageAmberPct
+                               ? meterItem.owner.usageAmberPct / fill.pct : 1.0;
+                    }
+                    color: {
+                        if (meterItem.hasRemaining) {
+                            const amberHealth = 100 - meterItem.owner.usageAmberPct;
+                            return fill.pct > amberHealth
+                                   ? meterItem.owner.remainingColor(meterItem.owner.remainingAmberUsd)
+                                   : meterItem.owner.remainingColor(meterItem.meter.remaining);
+                        }
+                        return fill.pct > meterItem.owner.usageAmberPct
+                               ? meterItem.owner.usageColor(meterItem.owner.usageAmberPct)
+                               : meterItem.owner.usageColor(fill.pct);
+                    }
                 }
                 GradientStop {
                     position: 1.0
-                    color: meterItem.owner.usageColor(fill.pct)
+                    color: meterItem.hasRemaining
+                           ? meterItem.owner.remainingColor(meterItem.meter.remaining)
+                           : meterItem.owner.usageColor(fill.pct)
                 }
             }
 
@@ -181,8 +217,13 @@ ColumnLayout {
         }
         if (meter.used_pct !== undefined && (meter.expired || meterItem.resetDue))
             return i18n("was %1%", Math.round(meter.used_pct));
-        if (meter.remaining !== undefined)
-            return Severity.humanCount(meter.remaining) + " " + (meter.unit || "");
+        if (meter.remaining !== undefined) {
+            const n = Number(meter.remaining);
+            const unit = String(meter.unit || "");
+            if (unit.toUpperCase() === "USD")
+                return i18n("$%1 left", n.toFixed(2));
+            return i18n("%1 %2 left", n.toFixed(2), unit);
+        }
         if (meter.total !== undefined)
             return Severity.humanCount(meter.total) + " " + (meter.unit || "");
         return "";
