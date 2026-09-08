@@ -78,9 +78,11 @@ PlasmaExtras.Representation {
                 id: refreshBtn
                 icon.name: "view-refresh"
                 flat: true
-                opacity: hovered ? 1 : 0.65
+                opacity: hovered || full.plasmoidItem.attentionCount > 0 ? 1 : 0.65
                 text: i18n("Refresh now")
-                display: PlasmaComponents.AbstractButton.IconOnly
+                display: full.plasmoidItem.attentionCount > 0
+                         ? PlasmaComponents.AbstractButton.TextBesideIcon
+                         : PlasmaComponents.AbstractButton.IconOnly
                 PlasmaComponents.ToolTip.text: {
                     const item = full.plasmoidItem;
                     const lines = [i18n("Refresh now")];

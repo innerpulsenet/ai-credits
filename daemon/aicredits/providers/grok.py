@@ -195,6 +195,10 @@ def _reading_from_config(conf: dict[str, Any], plan: str | None, fetched_at: int
         used = _val(conf.get("onDemandUsed"))
         if cap > 0:
             percent = used / cap * 100.0
+    # After a weekly reset with no usage yet, Grok omits the percent field
+    # entirely instead of sending 0. That is still a live window.
+    if percent is None and (conf.get("currentPeriod") or conf.get("billingPeriodEnd")):
+        percent = 0.0
     if percent is not None:
         meters.append(Meter(
             kind=WINDOW,

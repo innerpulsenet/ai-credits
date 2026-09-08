@@ -125,7 +125,9 @@ ColumnLayout {
         Layout.topMargin: 4
         visible: text !== ""
         text: meterItem.meter.expired || meterItem.resetDue
-              ? i18n("Reset due · refreshing automatically")
+              ? (meterItem.stale
+                 ? i18n("Window reset · tap Refresh now in the header")
+                 : i18n("Reset due · refreshing automatically"))
               : meterItem.meter.resets_at
                 ? i18n("Resets in %1", meterItem.owner.shortDuration(meterItem.meter.resets_at)) : ""
         color: meterItem.owner.ink

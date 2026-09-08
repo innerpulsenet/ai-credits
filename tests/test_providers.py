@@ -282,6 +282,23 @@ class TestGrok(unittest.TestCase):
                          ("Weekly", 65.0))
         self.assertEqual(reading.plan, "SuperGrok")
 
+    def test_missing_percent_after_weekly_reset_is_zero(self):
+        from aicredits.providers.grok import _reading_from_config
+        reading = _reading_from_config({
+            "currentPeriod": {"type": "USAGE_PERIOD_TYPE_WEEKLY",
+                              "start": "2026-09-08T11:38:19.841471+00:00",
+                              "end": "2026-09-15T11:38:19.841471+00:00"},
+            "prepaidBalance": {"val": 0},
+            "onDemandCap": {"val": 0},
+            "onDemandUsed": {"val": 0},
+            "billingPeriodEnd": "2026-09-15T11:38:19.841471+00:00",
+        }, "SuperGrok", 1788870000, None)
+        self.assertIsNotNone(reading)
+        self.assertEqual(reading.status, OK)
+        self.assertEqual((reading.meters[0].label, reading.meters[0].used_pct),
+                         ("Weekly", 0.0))
+        self.assertEqual(reading.meters[0].resets_at, 1789472299)
+
     def test_poll_http_beats_the_log(self):
         import json
         from aicredits.providers import grok as grok_mod

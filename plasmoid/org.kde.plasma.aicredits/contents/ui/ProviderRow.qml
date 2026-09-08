@@ -157,7 +157,13 @@ Item {
                 visible: text !== ""
                 Layout.fillWidth: true
                 Layout.topMargin: 3
-                text: row.provider.message || ""
+                text: {
+                    const msg = row.provider.message || "";
+                    if (row.attention)
+                        return (msg ? msg + " · " : "")
+                             + i18n("Tap Refresh now in the header to retry");
+                    return msg;
+                }
                 color: row.owner.inkSoft
                 font.pixelSize: Math.round(Kirigami.Theme.smallFont.pixelSize * 0.92)
                 wrapMode: Text.WordWrap
