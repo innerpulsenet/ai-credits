@@ -133,6 +133,7 @@ QQC2.ScrollView {
     function providerMeta(id) {
         switch (id) {
         case "codex": return { glyph: "CX", color: "#10a37f" };
+        case "deepseek": return { glyph: "DS", color: "#4d6bfe" };
         case "claude": return { glyph: "CL", color: "#d97706" };
         case "grok": return { glyph: "GK", color: "#9333ea" };
         case "zai": return { glyph: "ZA", color: "#06b6d4" };

@@ -32,6 +32,7 @@ PROVIDER_DEFAULTS: dict[str, tuple[str, str, int]] = {
     "openrouter":  ("OpenRouter",   "https://openrouter.ai/credits",              120),
     "nous":        ("Nous Portal",  "https://portal.nousresearch.com/billing",    120),
     "antigravity": ("Antigravity",  "https://antigravity.google/",                120),
+    "deepseek":    ("DeepSeek",     "https://platform.deepseek.com/top_up",       120),
 }
 
 # Fetch-path defaults. Adapters treat a missing key as these values; they are

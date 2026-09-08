@@ -39,6 +39,9 @@ QQC2.ScrollView {
     property bool codexExtra: true
     property bool claudeExtra: true
     property bool openrouterKey: true
+    property bool deepseekKeySet: false
+    property string deepseekKey: ""
+    property string keyResultText: ""
 
     readonly property color glass: Qt.rgba(Kirigami.Theme.backgroundColor.r,
                                             Kirigami.Theme.backgroundColor.g,
@@ -124,6 +127,18 @@ QQC2.ScrollView {
         }
     }
 
+    component GlassField: QQC2.TextField {
+        leftPadding: Kirigami.Units.largeSpacing
+        rightPadding: Kirigami.Units.largeSpacing
+        implicitHeight: Kirigami.Units.gridUnit * 2.25
+        background: Rectangle {
+            radius: Math.round(Kirigami.Units.gridUnit * 0.45)
+            color: parent.activeFocus ? page.glassHover : page.glass
+            border.width: parent.activeFocus ? 2 : 1
+            border.color: parent.activeFocus ? Kirigami.Theme.highlightColor : page.hairline
+        }
+    }
+
     function quote(value) {
         return "'" + String(value).replace(/'/g, "'\\''") + "'"
     }
@@ -162,7 +177,39 @@ QQC2.ScrollView {
         commands.push("systemctl --user start aicredits.service")
         page.busy = true
         page.resultText = i18n("Saving…")
+        writer.successText = i18n("Fetch sources saved. The popup will update shortly.")
+        writer.failText = i18n("Could not save fetch sources.")
         writer.connectSource(commands.join(" && "))
+    }
+
+    function loadAuth(text) {
+        page.deepseekKeySet = /(^|\n)\s*deepseek\s+set\s*(\n|$)/.test(text)
+    }
+
+    function saveDeepSeekKey() {
+        const key = page.deepseekKey.trim()
+        if (key === "") {
+            page.keyResultText = i18n("Enter a DeepSeek API key first.")
+            return
+        }
+        page.busy = true
+        page.keyResultText = i18n("Saving…")
+        writer.successText = i18n("DeepSeek key stored. The popup will update shortly.")
+        writer.failText = i18n("Could not store the DeepSeek key.")
+        writer.connectSource("printf %s " + page.quote(key) + " | "
+                             + page.quote(page.cliPath) + " auth set deepseek"
+                             + " && systemctl --user start aicredits.service")
+        page.deepseekKey = ""
+    }
+
+    function clearDeepSeekKey() {
+        page.busy = true
+        page.keyResultText = i18n("Removing…")
+        writer.successText = i18n("DeepSeek key removed.")
+        writer.failText = i18n("Could not remove the DeepSeek key.")
+        writer.connectSource(page.quote(page.cliPath) + " auth clear deepseek"
+                             + " && systemctl --user start aicredits.service")
+        page.deepseekKey = ""
     }
 
     Plasma5Support.DataSource {
@@ -180,16 +227,35 @@ QQC2.ScrollView {
     }
 
     Plasma5Support.DataSource {
+        id: authReader
+        engine: "executable"
+        connectedSources: [page.quote(page.cliPath) + " auth list"]
+        interval: 0
+        onNewData: function(source, data) {
+            disconnectSource(source)
+            if (data["exit code"] === 0)
+                page.loadAuth(data["stdout"])
+        }
+    }
+
+    Plasma5Support.DataSource {
         id: writer
         engine: "executable"
         connectedSources: []
         interval: 0
+        property string successText: ""
+        property string failText: ""
         onNewData: function(source, data) {
             disconnectSource(source)
             page.busy = false
-            page.resultText = data["exit code"] === 0
-                              ? i18n("Fetch sources saved. The popup will update shortly.")
-                              : i18n("Could not save fetch sources.")
+            const ok = data["exit code"] === 0
+            const msg = ok ? writer.successText : writer.failText
+            if (writer.successText.indexOf("DeepSeek") !== -1)
+                page.keyResultText = msg
+            else
+                page.resultText = msg
+            if (ok)
+                authReader.connectSource(page.quote(page.cliPath) + " auth list")
         }
     }
 
@@ -284,6 +350,65 @@ QQC2.ScrollView {
                         text: i18n("Save")
                         enabled: !page.busy
                         onClicked: page.saveValues()
+                    }
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: keyBody.implicitHeight + Kirigami.Units.gridUnit * 1.5
+            radius: page.cardRadius
+            color: page.glassRaised
+            border.width: 1
+            border.color: page.hairline
+            ColumnLayout {
+                id: keyBody
+                anchors { fill: parent; margins: Math.round(Kirigami.Units.gridUnit * 0.75) }
+                spacing: Kirigami.Units.largeSpacing
+
+                Kirigami.Heading { text: i18n("API keys"); level: 3 }
+                QQC2.Label {
+                    Layout.fillWidth: true
+                    wrapMode: Text.WordWrap
+                    color: Kirigami.Theme.disabledTextColor
+                    text: i18n("Stored in the desktop keyring, not in the config file. Leave the field blank to keep the current key.")
+                }
+
+                Kirigami.FormLayout {
+                    Layout.fillWidth: true
+                    GlassField {
+                        Kirigami.FormData.label: i18n("DeepSeek:")
+                        Layout.fillWidth: true
+                        echoMode: TextInput.Password
+                        text: page.deepseekKey
+                        onTextChanged: page.deepseekKey = text
+                        placeholderText: page.deepseekKeySet
+                                         ? i18n("Key stored — paste a new one to replace it")
+                                         : i18n("Paste API key from platform.deepseek.com")
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    QQC2.Label {
+                        Layout.fillWidth: true
+                        text: page.keyResultText !== ""
+                              ? page.keyResultText
+                              : (page.deepseekKeySet ? i18n("A DeepSeek key is stored.")
+                                                     : i18n("No DeepSeek key stored."))
+                        wrapMode: Text.WordWrap
+                        color: Kirigami.Theme.disabledTextColor
+                    }
+                    QQC2.Button {
+                        text: i18n("Remove")
+                        enabled: !page.busy && page.deepseekKeySet
+                        onClicked: page.clearDeepSeekKey()
+                    }
+                    QQC2.Button {
+                        text: i18n("Save key")
+                        enabled: !page.busy
+                        onClicked: page.saveDeepSeekKey()
                     }
                 }
             }

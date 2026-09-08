@@ -1,7 +1,7 @@
 # AI Credits
 
 A Plasma 6 system-tray applet showing remaining quota, credits and renewal costs
-across eight AI providers, on Fedora / KDE / Wayland.
+across nine AI providers, on Fedora / KDE / Wayland.
 
 Two decoupled pieces joined by one JSON file:
 
@@ -25,6 +25,7 @@ Two decoupled pieces joined by one JSON file:
 | Claude | live OAuth usage via Claude Code's local login (5h + 7d, plus optional Sonnet/Opus/Routines/Extra); falls back to Claude Code's cached usage, then transcript spend | live / cached |
 | Alibaba | `bl usage token-plan --output json` (official CLI, needs `bl auth login --console`); falls back to `~/.qwen/usage_record.jsonl` consumption | live / last `qwen` run |
 | OpenRouter | live `GET /api/v1/credits` plus optional `/api/v1/key` spend/cap — needs a stored **management** key | live |
+| DeepSeek | live `GET api.deepseek.com/user/balance` — needs `aicredits auth set deepseek` | live |
 | Antigravity | `agy --print "/usage" --output-format text` (Gemini + Claude/GPT groups, weekly + 5h) | live |
 
 Several of these are private, undocumented endpoints or log formats that can
@@ -82,14 +83,15 @@ out of your shell history and terminal scrollback:
 ```bash
 bin/aicredits auth set openrouter
 bin/aicredits auth set zai
+bin/aicredits auth set deepseek
 bin/aicredits auth list
 ```
 
 Record what a subscription costs, so the popup footer can total it:
 
 Right-click the widget, choose **Configure AI Credits**, and use the
-**Subscriptions** page. OpenRouter is intentionally omitted because its credit
-balance is prepaid. Supported billing cadences include daily, weekly, monthly,
+**Subscriptions** page. OpenRouter and DeepSeek are intentionally omitted because
+their credit balances are prepaid. Supported billing cadences include daily, weekly, monthly,
 quarterly, and annual. The same values can be managed from the terminal:
 
 ```bash
@@ -159,13 +161,13 @@ Each of these failed **silently** — no error, just wrong output:
 python3 -m unittest discover -s tests
 ```
 
-42 tests, no dependencies. Parsers run against redacted copies of real CLI
+92 tests, no dependencies. Parsers run against redacted copies of real CLI
 output in `tests/fixtures/`, so they work offline; each provider's quirks
 (remaining-vs-used, ratio-vs-percent, ms-vs-seconds) are pinned by a test.
 
 ## Status
 
-All eight providers report live when their authenticated clients, APIs, or
+All nine providers report live when their authenticated clients, APIs, or
 credentials are available. Every adapter retains its last good result and marks
 it stale if a refresh fails. Subscription renewal dates and costs are optional
 and editable from the widget's configuration window. Subscription quota meters

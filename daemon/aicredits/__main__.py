@@ -195,7 +195,7 @@ def _from_cache(conn, pid: str, settings: dict[str, Any], failed: Reading | None
 
 def _totals(entries: list[dict[str, Any]]) -> dict[str, Any]:
     monthly = sum(e["renewal"]["monthly_usd"] for e in entries if e.get("renewal"))
-    subscribed = [e for e in entries if e.get("id") != "openrouter"]
+    subscribed = [e for e in entries if e.get("id") not in ("openrouter", "deepseek")]
     upcoming = sorted((e for e in entries if e.get("renewal")),
                       key=lambda e: e["renewal"]["days_until"])
     totals: dict[str, Any] = {

@@ -18,6 +18,7 @@ function catalog() {
         {id: "antigravity", label: "Antigravity", glyph: "AG", color: "#ec4899"},
         {id: "claude", label: "Claude", glyph: "CL", color: "#d97706"},
         {id: "codex", label: "Codex", glyph: "CX", color: "#10a37f"},
+        {id: "deepseek", label: "DeepSeek", glyph: "DS", color: "#4d6bfe"},
         {id: "nous", label: "Nous Portal", glyph: "NP", color: "#3b82f6"},
         {id: "openrouter", label: "OpenRouter", glyph: "OR", color: "#6366f1"},
         {id: "grok", label: "SuperGrok", glyph: "GK", color: "#9333ea"},

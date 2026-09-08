@@ -736,3 +736,65 @@ class TestOpenRouterKey(unittest.TestCase):
         self.assertEqual(reading.status, OK)
         self.assertEqual(reading.meters[0].label, "Credits")
         self.assertAlmostEqual(reading.meters[0].remaining, 8.55, places=2)
+
+
+class TestDeepSeek(unittest.TestCase):
+    SAMPLE = {
+        "is_available": True,
+        "balance_infos": [
+            {"currency": "CNY", "total_balance": "110.00",
+             "granted_balance": "10.00", "topped_up_balance": "100.00"},
+            {"currency": "USD", "total_balance": "12.50",
+             "granted_balance": "0.00", "topped_up_balance": "12.50"},
+        ],
+    }
+
+    def test_prefers_usd_balance(self):
+        from aicredits.providers.deepseek import _meters_from_balance
+        meters = _meters_from_balance(self.SAMPLE)
+        self.assertEqual(len(meters), 1)
+        self.assertEqual(meters[0].label, "Credits")
+        self.assertEqual(meters[0].remaining, 12.50)
+        self.assertEqual(meters[0].unit, "USD")
+
+    def test_falls_back_to_cny_when_usd_missing(self):
+        from aicredits.providers.deepseek import _meters_from_balance
+        meters = _meters_from_balance({
+            "balance_infos": [{"currency": "CNY", "total_balance": "8.00",
+                               "granted_balance": "8.00", "topped_up_balance": "0.00"}],
+        })
+        self.assertEqual((meters[0].remaining, meters[0].unit), (8.0, "CNY"))
+
+    def test_empty_balance_list_is_an_error_shape(self):
+        from aicredits.providers.deepseek import _meters_from_balance
+        self.assertEqual(_meters_from_balance({"balance_infos": []}), [])
+
+    def test_poll_without_a_key_needs_auth(self):
+        from aicredits.providers import deepseek as ds
+        with mock.patch.object(ds.secrets, "get", return_value=None), \
+             mock.patch.dict("os.environ", {}, clear=False):
+            # Ensure env fallback is not accidentally set in this process.
+            with mock.patch.object(ds.os, "environ", {"HOME": "/tmp"}):
+                reading = ds.DeepSeek().poll({})
+        self.assertEqual(reading.status, "auth_needed")
+
+    def test_poll_reads_live_balance(self):
+        from aicredits.providers import deepseek as ds
+
+        sample = self.SAMPLE
+
+        class _Resp:
+            def read(self):
+                return json.dumps(sample).encode()
+            def __enter__(self):
+                return self
+            def __exit__(self, *exc):
+                return False
+
+        with mock.patch.object(ds.secrets, "get", return_value="sk-test"), \
+             mock.patch.object(ds.urllib.request, "urlopen", return_value=_Resp()):
+            reading = ds.DeepSeek().poll({})
+        self.assertEqual(reading.status, OK)
+        self.assertEqual(reading.source, "http")
+        self.assertEqual(reading.meters[0].remaining, 12.50)
+
