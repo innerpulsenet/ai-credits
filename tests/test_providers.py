@@ -371,6 +371,23 @@ class TestTrend(unittest.TestCase):
         self.assertIsNotNone(out)
         self.assertIn("exhausts_at", out)
 
+    def test_short_cycle_in_a_week_long_window_has_no_projection(self):
+        # A 0 → 1% blip in the first hour of a fresh weekly grant is not a pace.
+        points = [(0, 38.0), (100, 0.0), (2000, 0.0), (3600, 1.0)]
+        self.assertIsNone(trend.project(points, 1.0, 3600, resets_at=3600 + 6 * 86400))
+
+    def test_week_long_window_projects_after_two_hours(self):
+        points = [(0, 0.0), (3600, 2.0), (2 * 3600 + 60, 4.0)]
+        out = trend.project(points, 4.0, 2 * 3600 + 60, resets_at=2 * 3600 + 6 * 86400)
+        self.assertIsNotNone(out)
+        self.assertIn("projected_pct", out)
+
+    def test_week_long_window_projects_after_several_hours(self):
+        points = [(0, 0.0), (3 * 3600, 0.5), (7 * 3600, 1.0)]
+        out = trend.project(points, 1.0, 7 * 3600, resets_at=7 * 3600 + 6 * 86400)
+        self.assertIsNotNone(out)
+        self.assertIn("projected_pct", out)
+
 
 class TestRenewals(unittest.TestCase):
     TODAY = dt.date(2026, 9, 4)

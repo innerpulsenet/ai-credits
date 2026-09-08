@@ -47,6 +47,15 @@ def project(points: list[tuple[int, float]], current_pct: float, now: int,
     if current_pct is None or current_pct >= 100:
         return None
     cycle_pts = current_cycle_points(points)
+    if len(cycle_pts) < 2:
+        return None
+    # Wall clock since the cycle began, not last-minus-first sample: polling
+    # gaps must not keep a week-long meter silent after a reset.
+    span = max(cycle_pts[-1][0] - cycle_pts[0][0], now - cycle_pts[0][0])
+    # Skip only the first couple of hours after a multi-day reset, where a
+    # 0→1% blip still looks like a 200% week.
+    if resets_at and (resets_at - now) > 2 * 86400 and span < 2 * 3600:
+        return None
     slope = slope_per_second(cycle_pts)
     if not slope or slope <= 0:
         return None
