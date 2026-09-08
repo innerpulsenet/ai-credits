@@ -99,8 +99,11 @@ class OpenRouter(Provider):
                                  url=settings.get("url"))
         total = float(total or 0.0)
         used = float(used or 0.0)
+        # Remaining only — lifetime total would paint a used% bar that grows
+        # forever as you top up. Prepaid pools (DeepSeek, OpenRouter) show a
+        # remaining tank instead: amber at $3, red at empty.
         meters = [Meter(kind=BALANCE, label="Credits",
-                        remaining=max(0.0, total - used), total=total or None, unit="USD")]
+                        remaining=max(0.0, total - used), unit="USD")]
         if settings.get("fetch_key", True):
             try:
                 key_req = urllib.request.Request(settings.get("key_url") or KEY_URL, headers={

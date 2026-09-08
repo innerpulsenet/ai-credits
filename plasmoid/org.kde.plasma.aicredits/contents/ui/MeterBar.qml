@@ -20,6 +20,9 @@ ColumnLayout {
     required property real criticalPct
     required property var owner
     property bool stale: false
+    // Large tank + dollar figure is for prepaid-only providers (DeepSeek).
+    // Subscription add-ons like Nous Top-up stay a small colour-coded figure.
+    property bool prominentRemaining: false
     readonly property bool resetDue: !!meter.resets_at && meter.resets_at <= owner.nowSeconds
     readonly property bool atRisk: !stale && !resetDue && !!meter.projection
         && !!meter.resets_at && meter.projection.exhausts_at < meter.resets_at
@@ -28,13 +31,14 @@ ColumnLayout {
     readonly property bool hasRemaining: meter.kind === "balance"
         && meter.remaining !== undefined && !meterItem.hasPct
         && !meter.expired && !resetDue
+    readonly property bool showRemainingTank: meterItem.hasRemaining && meterItem.prominentRemaining
     readonly property real remainingHealth: {
-        if (!meterItem.hasRemaining)
+        if (!meterItem.showRemainingTank)
             return 0;
         const full = Math.max(meterItem.owner.remainingFullUsd, 0.01);
         return Math.max(0, Math.min(100, meter.remaining / full * 100));
     }
-    readonly property real fillPct: meterItem.hasRemaining
+    readonly property real fillPct: meterItem.showRemainingTank
         ? meterItem.remainingHealth
         : Math.max(0, Math.min(100, meter.used_pct || 0))
     readonly property string level: Severity.of(meterItem.hasPct ? meter.used_pct : -1,
@@ -68,10 +72,10 @@ ColumnLayout {
 
         PlasmaComponents.Label {
             text: meterItem.figure()
-            font.pixelSize: meterItem.hasRemaining
+            font.pixelSize: meterItem.showRemainingTank
                             ? meterItem.owner.figureSize
                             : Kirigami.Theme.smallFont.pixelSize
-            font.weight: meterItem.hasRemaining ? Font.DemiBold : Font.Normal
+            font.weight: meterItem.showRemainingTank ? Font.DemiBold : Font.Normal
             color: meterItem.stale ? meterItem.owner.ink
                    : meterItem.hasRemaining
                      ? meterItem.owner.remainingColor(meterItem.meter.remaining)
@@ -81,7 +85,7 @@ ColumnLayout {
 
     Rectangle {
         id: track
-        visible: meterItem.hasPct || meterItem.hasRemaining
+        visible: meterItem.hasPct || meterItem.showRemainingTank
         Layout.fillWidth: true
         Layout.topMargin: 4
         Layout.preferredHeight: 8
@@ -114,13 +118,13 @@ ColumnLayout {
                 orientation: Gradient.Horizontal
                 GradientStop {
                     position: 0.0
-                    color: meterItem.hasRemaining
+                    color: meterItem.showRemainingTank
                            ? meterItem.owner.remainingColor(meterItem.owner.remainingFullUsd)
                            : meterItem.owner.usageColor(0)
                 }
                 GradientStop {
                     position: {
-                        if (meterItem.hasRemaining) {
+                        if (meterItem.showRemainingTank) {
                             const amberHealth = 100 - meterItem.owner.usageAmberPct;
                             return fill.pct > amberHealth ? amberHealth / fill.pct : 1.0;
                         }
@@ -128,7 +132,7 @@ ColumnLayout {
                                ? meterItem.owner.usageAmberPct / fill.pct : 1.0;
                     }
                     color: {
-                        if (meterItem.hasRemaining) {
+                        if (meterItem.showRemainingTank) {
                             const amberHealth = 100 - meterItem.owner.usageAmberPct;
                             return fill.pct > amberHealth
                                    ? meterItem.owner.remainingColor(meterItem.owner.remainingAmberUsd)
@@ -141,7 +145,7 @@ ColumnLayout {
                 }
                 GradientStop {
                     position: 1.0
-                    color: meterItem.hasRemaining
+                    color: meterItem.showRemainingTank
                            ? meterItem.owner.remainingColor(meterItem.meter.remaining)
                            : meterItem.owner.usageColor(fill.pct)
                 }

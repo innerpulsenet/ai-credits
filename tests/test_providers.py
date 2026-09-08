@@ -736,6 +736,9 @@ class TestOpenRouterKey(unittest.TestCase):
         self.assertEqual(reading.status, OK)
         self.assertEqual(reading.meters[0].label, "Credits")
         self.assertAlmostEqual(reading.meters[0].remaining, 8.55, places=2)
+        self.assertIsNone(reading.meters[0].total)
+        self.assertIsNone(reading.meters[0].used_pct)
+        self.assertNotIn("used_pct", reading.meters[0].to_json())
 
 
 class TestDeepSeek(unittest.TestCase):

@@ -148,6 +148,7 @@ Item {
                     owner: row.owner
                     warnPct: row.owner.warnPct
                     criticalPct: row.owner.criticalPct
+                    prominentRemaining: !/top[- ]?up/i.test(String(modelData.label || ""))
                     Layout.fillWidth: true
                     Layout.topMargin: 3
                 }
